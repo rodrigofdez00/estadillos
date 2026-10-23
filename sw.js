@@ -1,7 +1,8 @@
 // Guarda la app en el móvil para que funcione sin cobertura.
-const CACHE = 'estadillos-v2';
+const CACHE = 'estadillos-v3';
 const LIBS = [
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js'
 ];
 const ASSETS = ['./', './index.html', './config.js', './manifest.webmanifest', './icon.svg', ...LIBS];

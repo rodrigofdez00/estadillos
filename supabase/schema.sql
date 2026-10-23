@@ -100,6 +100,13 @@ create table if not exists public.parcelas (
 alter table public.parcelas add column if not exists lat_orig double precision;
 alter table public.parcelas add column if not exists lon_orig double precision;
 
+-- Unidades de vegetación: polígonos de la finca y UV de cada parcela.
+--   fincas.uvs: [{id, num, nombre, sup (ha), polys: [{outer: [[lon,lat]...], holes: [...]}]}]
+--   parcelas.uv: id de la UV donde cae el punto; uv_fija = la oficina la puso a mano.
+alter table public.fincas   add column if not exists uvs jsonb not null default '[]';
+alter table public.parcelas add column if not exists uv text;
+alter table public.parcelas add column if not exists uv_fija boolean not null default false;
+
 create index if not exists parcelas_finca_idx  on public.parcelas (finca_id);
 create index if not exists parcelas_synced_idx on public.parcelas (synced_at);
 create index if not exists fincas_synced_idx   on public.fincas (synced_at);
@@ -191,6 +198,8 @@ create view public.v_parcelas with (security_invoker = on) as
 select
   f.nombre                                   as finca,
   f.tm,
+  (select u->>'num' from jsonb_array_elements(f.uvs) u where u->>'id' = p.uv)    as uv_num,
+  (select u->>'nombre' from jsonb_array_elements(f.uvs) u where u->>'id' = p.uv) as uv,
   p.canton,
   p.num                                      as parcela,
   p.estado,

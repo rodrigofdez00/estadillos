@@ -55,11 +55,20 @@ La app se usa en vertical y en horizontal. En tablet, la ficha se reparte en dos
 ## 5. Flujo de trabajo
 
 1. **Oficina:** crea la finca (nombre, término, radio de parcela y de regenerado, huso UTM) y carga los puntos desde **Ajustes → Importar puntos**. Vale el KMZ que exporta el SIG (el nombre de cada punto es el nº de parcela) o un CSV `parcela;lat;lon` o `parcela;x;y`.
+   Después carga las **unidades de vegetación** en **Ajustes → Importar UV**, con el KMZ/KML de UV o de rodales que lleve el campo de UV (por ejemplo `UV_id`, `UV` y `Sup`).
+   - Los polígonos con el mismo identificador forman una UV.
+   - La superficie se toma del campo `Sup` si existe; si no, se calcula.
+   - Cada parcela se asigna a la UV en la que cae su punto, y se recalcula si se mueve en campo.
+   - El nº, el nombre y la superficie de cada UV se pueden corregir. También se puede fijar a mano la UV de una parcela.
 2. **Campo:** abre la finca, elige la parcela y sigue la flecha hasta el punto.
    - Si el punto cae en un sitio no representativo (camino, roquedo, charca…), ponte donde vas a medir y pulsa **Datos → Mover el punto aquí**. La posición de la oficina se guarda y se puede recuperar con **Volver al original**.
    - Rellena las pestañas y pulsa **Terminar**.
 3. **Oficina:** ve el avance en la tabla resumen de la finca y exporta:
-   - **Excel**, con las hojas Parcelas, Pies Mayores, Árboles tipo, Pies menores, Regenerado, Estrato inferior, Matorral y Notas de campo. En la hoja Parcelas salen la posición del punto, si se movió, la posición original y cuántos metros se desplazó.
+   - **Excel de análisis por UV** (un archivo por UV, `UV1_ENCINAR_DENSO_analisis.xlsx`…), igual que el modelo de la oficina: hojas Pies Mayores, Parcelas, Regenerado estrato arbóreo, Matorral, Error y Notas de campo (extra), con sus fórmulas y gráficos.
+     - Entran las parcelas de la UV con la ficha empezada o terminada.
+     - Si hay más de una especie, se añade un bloque por especie (DNm, nº de pies, clases diamétricas, vigor y copa muerta, con sus gráficos).
+     - Comprobado con los datos de `UV1_ENCINAR_analisis_12.xlsx`: mismos resultados.
+   - **Datos completos**: un Excel con todo lo recogido, incluidos los árboles tipo, las coordenadas y los puntos movidos.
    - **KML de puntos**, para abrirlo en QGIS, ArcGIS o Google Earth:
      - Carpeta *Parcelas de Inventario*: cada parcela en su posición actual (la movida, si se movió), coloreada por estado. Las movidas van en naranja.
      - Carpeta *Posiciones originales*: el punto que puso la oficina y una línea hasta el nuevo, solo para las parcelas movidas.

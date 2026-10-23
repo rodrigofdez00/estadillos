@@ -308,6 +308,7 @@ details.tipo .body { padding: 0 14px 14px; display: flex; flex-direction: column
 <div id="app"></div>
 <div id="toast" hidden></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" defer></script>
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script>
@@ -425,11 +426,11 @@ async function logout() {
   S.me = null; saveNow(); go({ v: 'home' });
 }
 
-const fToRow = f => ({ id: f.id, nombre: f.nombre, tm: f.tm || '', radio: f.radio, radio_reg: f.radioReg, huso: f.huso, equipo: f.equipo || '', especies: f.sp, borrada: !!f.borrada, updated_at: f.upd || 0 });
-const pToRow = (f, p) => ({ id: p.id, finca_id: f.id, num: String(p.num), canton: p.canton || '', lat: p.lat, lon: p.lon, lat_orig: p.latO ?? null, lon_orig: p.lonO ?? null, estado: p.estado, ficha: p.f, borrada: !!p.borrada, updated_at: p.upd || 0 });
+const fToRow = f => ({ id: f.id, nombre: f.nombre, tm: f.tm || '', radio: f.radio, radio_reg: f.radioReg, huso: f.huso, equipo: f.equipo || '', especies: f.sp, uvs: f.uvs || [], borrada: !!f.borrada, updated_at: f.upd || 0 });
+const pToRow = (f, p) => ({ id: p.id, finca_id: f.id, num: String(p.num), canton: p.canton || '', lat: p.lat, lon: p.lon, lat_orig: p.latO ?? null, lon_orig: p.lonO ?? null, uv: p.uv ?? null, uv_fija: !!p.uvFija, estado: p.estado, ficha: p.f, borrada: !!p.borrada, updated_at: p.upd || 0 });
 function mergeF(r) {
   let f = S.fincas.find(x => x.id === r.id);
-  const val = { nombre: r.nombre, tm: r.tm, radio: +r.radio, radioReg: +r.radio_reg, huso: r.huso, equipo: r.equipo, sp: r.especies?.length ? r.especies : SP_ARB.map(x => x.slice()), borrada: r.borrada, upd: +r.updated_at };
+  const val = { nombre: r.nombre, tm: r.tm, radio: +r.radio, radioReg: +r.radio_reg, huso: r.huso, equipo: r.equipo, sp: r.especies?.length ? r.especies : SP_ARB.map(x => x.slice()), uvs: r.uvs || [], borrada: r.borrada, upd: +r.updated_at };
   if (!f) { if (r.borrada) return false; S.fincas.push({ id: r.id, parcelas: [], ...val, dirty: false }); return true; }
   if (f.dirty && (f.upd || 0) > +r.updated_at) return false; // lo local es más nuevo: se subirá
   Object.assign(f, val, { dirty: false }); return true;
@@ -437,7 +438,7 @@ function mergeF(r) {
 function mergeP(r) {
   const f = S.fincas.find(x => x.id === r.finca_id); if (!f) return false;
   let p = f.parcelas.find(x => x.id === r.id);
-  const val = { num: r.num, canton: r.canton, lat: r.lat, lon: r.lon, latO: r.lat_orig ?? null, lonO: r.lon_orig ?? null, estado: r.estado, f: Object.assign(newFicha(), r.ficha || {}), borrada: r.borrada, upd: +r.updated_at };
+  const val = { num: r.num, canton: r.canton, lat: r.lat, lon: r.lon, latO: r.lat_orig ?? null, lonO: r.lon_orig ?? null, uv: r.uv ?? null, uvFija: !!r.uv_fija, estado: r.estado, f: Object.assign(newFicha(), r.ficha || {}), borrada: r.borrada, upd: +r.updated_at };
   if (!p) { if (r.borrada) return false; f.parcelas.push({ id: r.id, ...val, dirty: false }); return true; }
   if (p.dirty && (p.upd || 0) > +r.updated_at) return false;
   Object.assign(p, val, { dirty: false }); return true;
@@ -476,7 +477,7 @@ async function sync(force) {
       data.forEach(mergeP);
     } else {
       for (const [f, p] of dP) {
-        const { data, error } = await sb.from('parcelas').update({ estado: p.estado, ficha: p.f, lat: p.lat, lon: p.lon, lat_orig: p.latO ?? null, lon_orig: p.lonO ?? null, updated_at: p.upd }).eq('id', p.id).select();
+        const { data, error } = await sb.from('parcelas').update({ estado: p.estado, ficha: p.f, lat: p.lat, lon: p.lon, lat_orig: p.latO ?? null, lon_orig: p.lonO ?? null, uv: p.uv ?? null, updated_at: p.upd }).eq('id', p.id).select();
         if (error) throw error;
         if (data.length) mergeP(data[0]); else p.dirty = false; // la oficina la borró o no existe
       }
@@ -717,30 +718,45 @@ function vFinca() {
   <div class="split finca-split"><div class="col">
   ${ps.length ? `<svg class="radar" id="radar" viewBox="0 0 360 240" role="img" aria-label="Plano de las parcelas"></svg>` : ''}
   </div><div class="col">
+  ${ps.length ? gruposUv(f, ps).map(([u, lista]) => `
   <section class="sec">
-    <div class="sec-h"><h2>Parcelas</h2><span class="note">Toca una para abrir su ficha</span></div>
-    <div class="list">
-      ${ps.map(p => `
-      <button class="item" data-act="openP" data-id="${p.id}">
-        <div class="pnum st-${p.estado}">${esc(p.num)}</div>
-        <div class="grow"><b>Parcela ${esc(p.num)}</b><div class="meta">${p.canton ? 'Cantón ' + esc(p.canton) + ' · ' : ''}<span class="tag st-${p.estado}">${ESTADO_TXT[p.estado]}</span>${p.latO != null ? ' <span class="tag st-curso">Movido</span>' : ''}${p.f.pm.length ? ` · ${p.f.pm.length} pies` : ''}</div></div>
-        <div class="dist" data-dist="${p.id}"></div>
-
-      </button>`).join('') || `<p class="empty">${isOf() ? 'Esta finca no tiene parcelas. Impórtalas desde Ajustes (KMZ, KML o CSV).' : 'La oficina aún no ha cargado los puntos de esta finca.'}</p>`}
-    </div>
-  </section>
+    <div class="sec-h"><h2>${(f.uvs || []).length ? esc(uvLabel(u)) : 'Parcelas'}</h2><span class="note">${(f.uvs || []).length ? `${lista.length} ${lista.length === 1 ? 'parcela' : 'parcelas'}${u?.sup != null ? ' · ' + fmt(u.sup, 2) + ' ha' : ''}` : 'Toca una para abrir su ficha'}</span></div>
+    <div class="list">${lista.map(itemParcela).join('')}</div>
+  </section>`).join('') : `<p class="empty">${isOf() ? 'Esta finca no tiene parcelas. Impórtalas desde Ajustes (KMZ, KML o CSV).' : 'La oficina aún no ha cargado los puntos de esta finca.'}</p>`}
   </div></div>
   ${isOf() && ps.length ? vResumen(f, ps) : ''}
   <section class="sec">
-    <div class="sec-h"><h2>Exportar</h2></div>
+    <div class="sec-h"><h2>Excel de análisis</h2><span class="note">Uno por UV, como el modelo de la oficina</span></div>
+    <div class="row">
+      ${(f.uvs || []).length
+        ? (f.uvs.map(u => `<button class="btn" data-act="uvX" data-v="${esc(u.id)}">UV ${esc(u.num)} · ${esc(u.nombre)}</button>`).join('') + (f.uvs.length > 1 ? '<button class="btn ghost" data-act="uvX" data-v="*">Todas las UV</button>' : '') + (ps.some(p => !p.uv && p.estado !== 'pendiente') ? '<button class="btn ghost" data-act="uvX" data-v="sin">Sin UV</button>' : ''))
+        : '<button class="btn" data-act="uvX" data-v="sin">Excel de análisis</button>'}
+    </div>
+    ${(f.uvs || []).length ? '' : '<p class="hint">Importa las unidades de vegetación en Ajustes para sacar un Excel por UV.</p>'}
+  </section>
+  <section class="sec">
+    <div class="sec-h"><h2>Otros datos</h2></div>
     <div class="grid3">
-      <button class="btn" data-act="xlsx">Excel</button>
+      <button class="btn ghost" data-act="xlsx">Datos completos</button>
       <button class="btn ghost" data-act="kml">KML de puntos</button>
       <button class="btn ghost" data-act="fotosF">Fotos</button>
     </div>
   </section>
 </main>`;
 }
+// Parcelas agrupadas por UV en el orden de las UV; al final las que no caen en ninguna.
+function gruposUv(f, ps) {
+  if (!(f.uvs || []).length) return [[null, ps]];
+  const g = f.uvs.map(u => [u, ps.filter(p => p.uv === u.id)]).filter(([, l]) => l.length);
+  const sin = ps.filter(p => !uvOf(f, p)); if (sin.length) g.push([null, sin]);
+  return g;
+}
+const itemParcela = p => `
+      <button class="item" data-act="openP" data-id="${p.id}">
+        <div class="pnum st-${p.estado}">${esc(p.num)}</div>
+        <div class="grow"><b>Parcela ${esc(p.num)}</b><div class="meta">${p.canton ? 'Cantón ' + esc(p.canton) + ' · ' : ''}<span class="tag st-${p.estado}">${ESTADO_TXT[p.estado]}</span>${p.latO != null ? ' <span class="tag st-curso">Movido</span>' : ''}${p.f.pm.length ? ` · ${p.f.pm.length} pies` : ''}</div></div>
+        <div class="dist" data-dist="${p.id}"></div>
+      </button>`;
 // Tabla para la oficina: cómo va cada parcela y sus primeros resultados.
 function vResumen(f, ps) {
   const rs = ps.map(p => [p, resumen(f, p)]);
@@ -750,8 +766,8 @@ function vResumen(f, ps) {
   <section class="sec">
     <div class="sec-h"><h2>Resumen de la finca</h2><span class="note">${hechas.length ? `Media de ${hechas.length} parcelas: ${fmt(media('piesHa'), 0)} pies/ha · ${fmt(media('abHa'), 2)} m²/ha` : 'Sin datos todavía'}</span></div>
     <div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>Parcela</th><th>Estado</th><th>Fecha</th><th>Equipo</th><th class="n">Pies</th><th class="n">Pies/ha</th><th class="n">Dn medio</th><th class="n">AB m²/ha</th><th class="n">Menores/ha</th><th class="n">Regen./ha</th><th class="n">Fotos</th></tr></thead>
-      <tbody>${rs.map(([p, r]) => `<tr data-act="openP" data-id="${p.id}"><td><b>${esc(p.num)}</b>${p.canton ? ' <span class="hint">' + esc(p.canton) + '</span>' : ''}</td><td><span class="tag st-${p.estado}">${ESTADO_TXT[p.estado]}</span></td><td>${esc(p.f.fecha ? p.f.fecha.split('-').reverse().join('/') : '')}</td><td>${esc(p.f.equipo)}</td>
+      <thead><tr><th>Parcela</th>${(f.uvs || []).length ? '<th>UV</th>' : ''}<th>Estado</th><th>Fecha</th><th>Equipo</th><th class="n">Pies</th><th class="n">Pies/ha</th><th class="n">Dn medio</th><th class="n">AB m²/ha</th><th class="n">Menores/ha</th><th class="n">Regen./ha</th><th class="n">Fotos</th></tr></thead>
+      <tbody>${rs.map(([p, r]) => `<tr data-act="openP" data-id="${p.id}"><td><b>${esc(p.num)}</b>${p.canton ? ' <span class="hint">' + esc(p.canton) + '</span>' : ''}</td>${(f.uvs || []).length ? `<td>${uvOf(f, p) ? 'UV ' + esc(uvOf(f, p).num) : '—'}</td>` : ''}<td><span class="tag st-${p.estado}">${ESTADO_TXT[p.estado]}</span></td><td>${esc(p.f.fecha ? p.f.fecha.split('-').reverse().join('/') : '')}</td><td>${esc(p.f.equipo)}</td>
         <td class="n">${r.n || ''}</td><td class="n">${r.n ? fmt(r.piesHa, 0) : ''}</td><td class="n">${r.dnm != null ? fmt(r.dnm) : ''}</td><td class="n">${r.n ? fmt(r.abHa, 2) : ''}</td><td class="n">${r.men ? fmt(r.menHa, 0) : ''}</td><td class="n">${r.regV ? fmt(r.regHa, 0) : ''}</td><td class="n">${p.f.fotos.length || ''}</td></tr>`).join('')}</tbody>
     </table></div>
   </section>`;
@@ -762,6 +778,8 @@ function drawRadar() {
   if (!ps.length) { svg.remove(); return; }
   const pts = ps.map(p => ({ lat: p.lat, lon: p.lon }));
   ps.forEach(p => { if (p.latO != null) pts.push({ lat: p.latO, lon: p.lonO }); });
+  const uvs = f.uvs || [];
+  uvs.forEach(u => u.polys.forEach(pg => pg.outer.forEach(([lon, lat]) => pts.push({ lat, lon }))));
   const near = G && dist(G, pts[0]) < 5000;
   if (near) pts.push(G);
   const lat0 = pts.reduce((a, p) => a + p.lat, 0) / pts.length, lon0 = pts.reduce((a, p) => a + p.lon, 0) / pts.length;
@@ -779,6 +797,11 @@ function drawRadar() {
   const col = { pendiente: 'var(--idle)', curso: 'var(--warn)', hecha: 'var(--ok)' };
   let h = `<g><path d="M${W - 22} 30 L${W - 16} 14 L${W - 10} 30 L${W - 16} 26 Z" fill="var(--ink)"/><text x="${W - 16}" y="44" text-anchor="middle" class="lbl2">N</text></g>`;
   h += `<g><line x1="14" y1="${Hh - 14}" x2="${14 + sm * sc}" y2="${Hh - 14}" stroke="var(--ink)" stroke-width="2"/><text x="14" y="${Hh - 20}" class="lbl2">${fDist(sm)}</text></g>`;
+  // Unidades de vegetación: polígonos de fondo, un tono por UV.
+  const tonos = ['#2E7D32', '#1565C0', '#A86500', '#6A1B9A', '#00838F', '#AD1457'];
+  const ring = r => r.map(([lon, lat], i) => { const [x, y] = P2({ lat, lon }); return (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1); }).join('') + 'Z';
+  uvs.forEach((u, i) => { h += `<path d="${u.polys.map(pg => ring(pg.outer) + pg.holes.map(ring).join('')).join('')}" fill="${tonos[i % tonos.length]}" fill-opacity=".12" stroke="${tonos[i % tonos.length]}" stroke-opacity=".7" stroke-width="1" fill-rule="evenodd"><title>${esc(uvLabel(u))}</title></path>`; });
+  if (uvs.length) h += `<g class="lbl2">${uvs.map((u, i) => `<text x="${W - 10}" y="${Hh - 12 - (uvs.length - 1 - i) * 14}" text-anchor="end" style="fill:${tonos[i % tonos.length]};paint-order:stroke;stroke:var(--surface);stroke-width:3px">■ UV ${esc(u.num)} · ${esc(u.nombre)}</text>`).join('')}</g>`;
   // Punto movido: hueco en la posición original y línea hasta la nueva.
   ps.filter(p => p.latO != null).forEach(p => { const [x0, y0] = P2({ lat: p.latO, lon: p.lonO }), [x1, y1] = P2(p); h += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="var(--warn)" stroke-width="2" stroke-dasharray="4 3"/><circle cx="${x0}" cy="${y0}" r="6" fill="var(--surface)" stroke="var(--warn)" stroke-width="2"/>`; });
   ps.forEach(p => { const [x, y] = P2(p); h += `<g data-act="openP" data-id="${p.id}" style="cursor:pointer"><circle cx="${x}" cy="${y}" r="20" fill="transparent"/><circle cx="${x}" cy="${y}" r="13" fill="${col[p.estado]}"/><text x="${x}" y="${y + 4.5}" text-anchor="middle" fill="#fff" style="fill:#fff">${esc(p.num)}</text></g>`; });
@@ -811,8 +834,27 @@ function vCfg() {
     <label class="btn">Importar puntos<input type="file" accept=".kmz,.kml,.csv,.txt" data-change="importPts" hidden></label>
     <div class="rows">
       ${ps.map(p => `<div class="r"><div class="r-h"><b>Parcela ${esc(p.num)}</b><button class="del" data-act="delP" data-id="${p.id}">Eliminar</button></div>
-        <div class="grid2"><label class="fld"><span>Nº parcela</span><input data-pk="${p.id}.num" value="${esc(p.num)}"></label><label class="fld"><span>Cantón</span><input data-pk="${p.id}.canton" value="${esc(p.canton)}"></label></div>
+        <div class="grid3"><label class="fld"><span>Nº parcela</span><input data-pk="${p.id}.num" value="${esc(p.num)}"></label><label class="fld"><span>Cantón</span><input data-pk="${p.id}.canton" value="${esc(p.canton)}"></label>
+        <label class="fld"><span>UV</span><select data-change="uvSel" data-id="${p.id}">
+          <option value="auto" ${!p.uvFija ? 'selected' : ''}>${p.uvFija ? 'Según posición' : 'Según posición: ' + esc(uvOf(f, p) ? 'UV ' + uvOf(f, p).num : 'ninguna')}</option>
+          ${(f.uvs || []).map(u => `<option value="${esc(u.id)}" ${p.uvFija && p.uv === u.id ? 'selected' : ''}>UV ${esc(u.num)} · ${esc(u.nombre)}</option>`).join('')}
+          <option value="none" ${p.uvFija && !p.uv ? 'selected' : ''}>Sin UV</option>
+        </select></label></div>
         <div class="hint num">${p.lat != null ? `${fmt(p.lat, 6)}, ${fmt(p.lon, 6)}` : 'Sin coordenadas'}</div></div>`).join('')}
+    </div>
+  </section>
+  <section class="sec">
+    <div class="sec-h"><h2>Unidades de vegetación</h2></div>
+    <p class="hint">Importa el KML o KMZ de unidades de vegetación (o de rodales con su campo UV) exportado del SIG. Los polígonos con el mismo identificador de UV se juntan y cada parcela se asigna a la UV en la que cae su punto. Si un punto se mueve en campo, se vuelve a calcular.</p>
+    <div class="grid2">
+      <label class="btn">Importar UV<input type="file" accept=".kmz,.kml" data-change="importUv" hidden></label>
+      ${(f.uvs || []).length ? '<button class="btn danger" data-act="delUvs">Quitar las UV</button>' : ''}
+    </div>
+    <div class="rows">
+      ${(f.uvs || []).map(u => { const n = ps.filter(p => p.uv === u.id).length; return `<div class="r">
+        <div class="grid3"><label class="fld"><span>Nº UV</span><input data-uvk="${esc(u.id)}.num" value="${esc(u.num)}"></label><label class="fld"><span>Nombre</span><input data-uvk="${esc(u.id)}.nombre" value="${esc(u.nombre)}"></label><label class="fld"><span>Superficie (ha)</span><input data-uvk="${esc(u.id)}.sup" data-num inputmode="decimal" value="${esc(fmt(u.sup, 2))}"></label></div>
+        <div class="hint">${n} ${n === 1 ? 'parcela' : 'parcelas'} · ${u.polys.length} ${u.polys.length === 1 ? 'polígono' : 'polígonos'}</div></div>`; }).join('')}
+      ${(f.uvs || []).length && ps.some(p => !p.uv) ? `<p class="hint">Sin UV: parcelas ${ps.filter(p => !p.uv).map(p => esc(p.num)).join(', ')}</p>` : ''}
     </div>
   </section>
   <section class="sec card">
@@ -842,7 +884,7 @@ function vFicha() {
   return `
 <header class="bar"><div class="bar-in">
   <button class="ib" data-act="back" aria-label="Volver a la finca">${ICON.back}</button>
-  <div class="grow"><h1>Parcela ${esc(p.num)}</h1><div class="sub">${esc(f.nombre)}${p.canton ? ' · Cantón ' + esc(p.canton) : ''} · r = ${fmt(f.radio)} m</div></div>
+  <div class="grow"><h1>Parcela ${esc(p.num)}</h1><div class="sub">${esc(f.nombre)}${uvOf(f, p) ? ' · UV ' + esc(uvOf(f, p).num) : ''}${p.canton ? ' · Cantón ' + esc(p.canton) : ''} · r = ${fmt(f.radio)} m</div></div>
   <button class="pill-btn ${p.estado === 'hecha' ? 'done' : ''}" data-act="estado">${p.estado === 'hecha' ? '✓ Hecha' : 'Terminar'}</button>
 </div></header>
 <nav class="tabs" role="tablist">${TABS.map(([k, l]) => { const b = badge(k, p); return `<button class="tab" role="tab" data-act="tab" data-v="${k}" aria-selected="${V.tab === k}">${l}${b !== '' && b !== 0 ? `<span class="b">${b}</span>` : ''}</button>`; }).join('')}</nav>
@@ -1172,11 +1214,91 @@ async function importPts(file) {
     const n = q.num || String(f.parcelas.length + 1);
     const ex = vivas(f).find(p => String(p.num) === String(n));
     // Un punto movido en campo conserva su posición nueva.
-    if (ex) { if (ex.latO == null) { ex.lat = q.lat; ex.lon = q.lon; } else movidas++; if (q.canton) ex.canton = q.canton; mark(ex); act++; }
-    else { const np = newParcela(n, q.lat, q.lon, q.canton); mark(np); f.parcelas.push(np); nuevas++; }
+    if (ex) { if (ex.latO == null) { ex.lat = q.lat; ex.lon = q.lon; } else movidas++; if (q.canton) ex.canton = q.canton; asignarUv(f, ex); mark(ex); act++; }
+    else { const np = newParcela(n, q.lat, q.lon, q.canton); asignarUv(f, np); mark(np); f.parcelas.push(np); nuevas++; }
   });
   mark(f); saveNow(); syncSoon(); render(true);
   toast(`${nuevas} parcelas nuevas, ${act} actualizadas${movidas ? ` (${movidas} movidas en campo conservan su posición)` : ''}`, 4000);
+}
+
+/* ============ Unidades de vegetación (UV) ============
+   Se importan los polígonos del SIG (KML/KMZ) y cada parcela se asigna a la UV
+   en la que cae su punto. Varios polígonos con el mismo identificador forman una UV. */
+// Atributos de un Placemark: ExtendedData o la tabla HTML que exporta ArcGIS en la descripción.
+function kmlAttrs(pm) {
+  const a = {};
+  for (const d of pm.getElementsByTagName('SimpleData')) a[d.getAttribute('name')] = d.textContent.trim();
+  for (const d of pm.getElementsByTagName('Data')) a[d.getAttribute('name')] = (d.getElementsByTagName('value')[0]?.textContent || '').trim();
+  const desc = pm.getElementsByTagName('description')[0]?.textContent;
+  if (desc && /<td/i.test(desc)) {
+    const html = new DOMParser().parseFromString(desc, 'text/html');
+    for (const tr of html.querySelectorAll('tr')) { const td = tr.querySelectorAll(':scope > td'); if (td.length === 2) { const k = td[0].textContent.trim(); if (k && !(k in a)) a[k] = td[1].textContent.trim(); } }
+  }
+  return a;
+}
+const ringOf = el => (el?.getElementsByTagName('coordinates')[0]?.textContent.trim().split(/\s+/) || [])
+  .map(s => s.split(',').map(Number)).filter(c => c.length >= 2 && !isNaN(c[0]) && !isNaN(c[1]))
+  .map(([lo, la]) => [+lo.toFixed(7), +la.toFixed(7)]);
+function parseUvKml(txt) {
+  const doc = new DOMParser().parseFromString(txt, 'application/xml');
+  const feats = [...doc.getElementsByTagName('Placemark')].map(pm => {
+    const polys = [...pm.getElementsByTagName('Polygon')].map(pg => ({
+      outer: ringOf(pg.getElementsByTagName('outerBoundaryIs')[0]),
+      holes: [...pg.getElementsByTagName('innerBoundaryIs')].map(ringOf).filter(r => r.length > 2)
+    })).filter(p => p.outer.length > 2);
+    return { name: pm.getElementsByTagName('name')[0]?.textContent.trim() || '', attrs: kmlAttrs(pm), polys };
+  }).filter(x => x.polys.length);
+  if (!feats.length) throw new Error('El archivo no tiene polígonos');
+  // Campos: identificador de la UV, su nombre y su superficie (ha).
+  const keys = Object.keys(feats[0].attrs);
+  const find = re => keys.find(k => re.test(k.trim()));
+  const kId = find(/^(uv_?id|id_?uv|cod_?uv|n_?uv|num_?uv|uv_?n|uv_?num)$/i) || find(/^uv$/i) || find(/unidad|vegetac/i);
+  const kName = find(/^(uv|nombre_?uv|uv_?nombre|unidad|vegetacion|vegetación|formacion|formación|desc_?uv)$/i) || find(/unidad|vegetac/i);
+  const kSup = find(/^(sup|superf|superficie|area|área|sup_?ha|ha)$/i);
+  const groups = new Map();
+  feats.forEach((ft, i) => {
+    const key = (kId ? ft.attrs[kId] : '') || (kName ? ft.attrs[kName] : '') || ft.name || String(i + 1);
+    let g = groups.get(key);
+    if (!g) { g = { id: 'uv_' + String(key).normalize('NFD').replace(/[^\w]+/g, '_'), num: key, nombre: (kName && ft.attrs[kName]) || ft.name || ('UV ' + key), supAttr: 0, hasSup: false, polys: [] }; groups.set(key, g); }
+    g.polys.push(...ft.polys);
+    const s = kSup ? num(ft.attrs[kSup]) : null; if (s != null) { g.supAttr += s; g.hasSup = true; }
+  });
+  return [...groups.values()].map(g => ({ id: g.id, num: g.num, nombre: g.nombre, sup: +(g.hasSup ? g.supAttr : uvArea(g.polys)).toFixed(4), polys: g.polys }))
+    .sort((a, b) => (parseFloat(a.num) || 0) - (parseFloat(b.num) || 0) || String(a.num).localeCompare(b.num));
+}
+// Superficie en ha proyectando cada anillo a metros en torno a su latitud media.
+function ringArea(r) {
+  const lat0 = r.reduce((a, c) => a + c[1], 0) / r.length, k = Math.cos(lat0 * Math.PI / 180);
+  let s = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) s += (r[j][0] * k * 111320) * (r[i][1] * 110540) - (r[i][0] * k * 111320) * (r[j][1] * 110540);
+  return Math.abs(s / 2);
+}
+const uvArea = polys => polys.reduce((a, p) => a + ringArea(p.outer) - p.holes.reduce((b, h) => b + ringArea(h), 0), 0) / 10000;
+function inRing(lon, lat, r) {
+  let inside = false;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+    const [xi, yi] = r[i], [xj, yj] = r[j];
+    if ((yi > lat) !== (yj > lat) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+const uvDe = (f, lat, lon) => lat == null ? null : (f.uvs || []).find(u => u.polys.some(p => inRing(lon, lat, p.outer) && !p.holes.some(h => inRing(lon, lat, h))))?.id || null;
+// Asigna la UV por posición salvo que la oficina la haya fijado a mano.
+function asignarUv(f, p) { if (p.uvFija) return false; const u = uvDe(f, p.lat, p.lon); if ((p.uv || null) !== u) { p.uv = u; return true; } return false; }
+const uvOf = (f, p) => (f.uvs || []).find(u => u.id === p.uv) || null;
+const uvLabel = u => u ? `UV ${u.num} · ${u.nombre}` : 'Sin UV';
+async function importUvs(file) {
+  const f = F(); let uvs;
+  try { uvs = parseUvKml(/\.kmz$/i.test(file.name) ? await unzipKml(await file.arrayBuffer()) : await file.text()); }
+  catch (e) { toast('No se pudo leer el archivo: ' + e.message, 5000); return; }
+  // Conserva los nombres que la oficina ya hubiera corregido.
+  const prev = new Map((f.uvs || []).map(u => [u.id, u]));
+  uvs.forEach(u => { const o = prev.get(u.id); if (o && o.editado) { u.nombre = o.nombre; u.num = o.num; u.editado = true; } });
+  f.uvs = uvs; mark(f);
+  let dentro = 0;
+  vivas(f).forEach(p => { if (asignarUv(f, p)) mark(p); if (p.uv) dentro++; });
+  save(); render(true);
+  const fuera = vivas(f).length - dentro;
+  toast(`${uvs.length} UV importadas · ${dentro} parcelas asignadas${fuera ? ` · ${fuera} fuera de todas las UV` : ''}`, 5000);
 }
 
 /* ============ Exportar ============ */
@@ -1223,6 +1345,292 @@ function exportXlsx() {
   const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   shareOrSave([new File([out], `Inventario_${safeName(f.nombre)}_${today()}.xlsx`, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })]);
 }
+/* ============ Excel de análisis por UV ============
+   Reproduce el modelo «UVn_NOMBRE_analisis.xlsx» de la oficina: mismas hojas, estilos,
+   fórmulas y gráficos. Las filas y los bloques por especie crecen con los datos.
+   Se escribe el OOXML a mano (SheetJS gratuito no guarda estilos ni gráficos). */
+const XL = (() => {
+  const col = i => { let s = ''; i++; while (i) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; };
+  const colIdx = s => s.split('').reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+  const x = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  // Estilos del modelo: 1 título, 2 subtítulo, 3 cabecera azul, 5 dato azul, 6 celda, 7 etiqueta, 8 valor, 9 dato azul sin borde, 10 total.
+  const STYLES = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="7"><font><sz val="11"/><color rgb="FF000000"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="14"/><name val="Arial"/><family val="2"/></font><font><b/><sz val="10"/><name val="Arial"/><family val="2"/></font><font><b/><sz val="8"/><color rgb="FFFFFFFF"/><name val="Arial"/><family val="2"/></font><font><sz val="8"/><color rgb="FF0000FF"/><name val="Arial"/><family val="2"/></font><font><sz val="8"/><name val="Arial"/><family val="2"/></font><font><b/><sz val="8"/><name val="Arial"/><family val="2"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF4472C4"/><bgColor rgb="FF4F81BD"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color auto="1"/></left><right style="thin"><color auto="1"/></right><top style="thin"><color auto="1"/></top><bottom style="thin"><color auto="1"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="11"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="3" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/><xf numFmtId="0" fontId="4" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/><xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/><xf numFmtId="0" fontId="6" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="5" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="6" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+  const PAL = ['4F81BD', 'C0504D', '9BBB59', '8064A2', '4BACC6', 'F79646', '2C4D75', '772C2A', '5F7530', '4D3B62', '276A7C', 'B65708'];
+  class Sheet {
+    constructor(name, cols) { this.name = name; this.cols = cols || []; this.rows = new Map(); this.charts = []; }
+    // v: número, texto, null (celda vacía con estilo) o {f: 'FÓRMULA'}
+    set(ref, v, s = 0) { const m = ref.match(/^([A-Z]+)(\d+)$/); const r = +m[2]; if (!this.rows.has(r)) this.rows.set(r, new Map()); this.rows.get(r).set(colIdx(m[1]), { v, s }); }
+    chart(c) { this.charts.push(c); }
+    xml(drawId) {
+      const cells = [...this.rows.keys()].sort((a, b) => a - b).map(r => `<row r="${r}">` + [...this.rows.get(r).entries()].sort((a, b) => a[0] - b[0]).map(([c, { v, s }]) => {
+        const ref = col(c) + r, st = s ? ` s="${s}"` : '';
+        if (v == null || v === '') return `<c r="${ref}"${st}/>`;
+        if (typeof v === 'object') return `<c r="${ref}"${st}><f>${x(v.f)}</f></c>`;
+        if (typeof v === 'number' && isFinite(v)) return `<c r="${ref}"${st}><v>${v}</v></c>`;
+        return `<c r="${ref}"${st} t="inlineStr"><is><t xml:space="preserve">${x(v)}</t></is></c>`;
+      }).join('') + '</row>').join('');
+      const cols = this.cols.length ? '<cols>' + this.cols.map(([a, b, w]) => `<col min="${a}" max="${b}" width="${w}" customWidth="1"/>`).join('') + '</cols>' : '';
+      return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${cols}<sheetData>${cells}</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>${drawId ? '<drawing r:id="rId1"/>' : ''}</worksheet>`;
+    }
+  }
+  function chartXml(c) {
+    const font = (sz, b) => `<a:defRPr sz="${sz}" b="${b ? 1 : 0}"><a:solidFill><a:srgbClr val="000000"/></a:solidFill><a:latin typeface="Calibri"/></a:defRPr>`;
+    const title = `<c:title><c:tx><c:rich><a:bodyPr rot="0"/><a:lstStyle/><a:p><a:pPr>${font(1400, 1)}</a:pPr><a:r><a:rPr lang="es-ES" sz="1400" b="1"><a:solidFill><a:srgbClr val="000000"/></a:solidFill><a:latin typeface="Calibri"/></a:rPr><a:t>${x(c.title)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>`;
+    const fill = h => `<c:spPr><a:solidFill><a:srgbClr val="${h}"/></a:solidFill><a:ln w="0"><a:noFill/></a:ln></c:spPr>`;
+    const tx = c.ser ? `<c:tx><c:strRef><c:f>${x(c.ser)}</c:f></c:strRef></c:tx>` : '';
+    const data = `<c:cat><c:strRef><c:f>${x(c.cat)}</c:f></c:strRef></c:cat><c:val><c:numRef><c:f>${x(c.val)}</c:f></c:numRef></c:val>`;
+    const txt = `<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr>${font(1000)}</a:pPr><a:endParaRPr lang="es-ES"/></a:p></c:txPr>`;
+    const axLn = '<c:spPr><a:ln w="9360"><a:solidFill><a:srgbClr val="878787"/></a:solidFill></a:ln></c:spPr>';
+    const plot = c.type === 'bar'
+      ? `<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/><c:ser><c:idx val="0"/><c:order val="0"/>${tx}${fill('4F81BD')}<c:invertIfNegative val="0"/>${data}</c:ser><c:gapWidth val="150"/><c:axId val="1001"/><c:axId val="1002"/></c:barChart>`
+        + `<c:catAx><c:axId val="1001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>${axLn}${txt}<c:crossAx val="1002"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>`
+        + `<c:valAx><c:axId val="1002"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines>${axLn}</c:majorGridlines><c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>${axLn}${txt}<c:crossAx val="1001"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx>`
+      : `<c:pieChart><c:varyColors val="1"/><c:ser><c:idx val="0"/><c:order val="0"/>${tx}${Array.from({ length: c.n }, (_, i) => `<c:dPt><c:idx val="${i}"/><c:bubble3D val="0"/>${fill(PAL[i % PAL.length])}</c:dPt>`).join('')}<c:dLbls>${txt}<c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="1"/><c:showBubbleSize val="0"/><c:showLeaderLines val="1"/></c:dLbls>${data}</c:ser><c:firstSliceAng val="0"/></c:pieChart>`;
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:roundedCorners val="0"/><c:chart>${title}<c:plotArea><c:layout/>${plot}<c:spPr><a:noFill/><a:ln w="0"><a:noFill/></a:ln></c:spPr></c:plotArea><c:legend><c:legendPos val="r"/><c:overlay val="0"/>${txt}</c:legend><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart><c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln w="9360"><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln></c:spPr></c:chartSpace>`;
+  }
+  const drawingXml = (charts, first) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">` + charts.map((c, i) =>
+    `<xdr:twoCellAnchor editAs="oneCell"><xdr:from><xdr:col>${c.col}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${c.row}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>${c.col + (c.w || 6)}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${c.row + (c.h || 15)}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${i + 2}" name="Gráfico ${first + i}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId${i + 1}"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor>`).join('') + '</xdr:wsDr>';
+  const rel = (id, type, target) => `<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${target}"/>`;
+  const rels = items => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${items.join('')}</Relationships>`;
+  async function book(sheets) {
+    const zip = new JSZip();
+    const ov = [], CT = 'application/vnd.openxmlformats-officedocument.';
+    let nChart = 0, nDraw = 0;
+    sheets.forEach((sh, i) => {
+      const n = i + 1;
+      if (sh.charts.length) {
+        const d = ++nDraw, first = nChart + 1;
+        zip.file(`xl/worksheets/_rels/sheet${n}.xml.rels`, rels([rel('rId1', 'drawing', `../drawings/drawing${d}.xml`)]));
+        zip.file(`xl/drawings/drawing${d}.xml`, drawingXml(sh.charts, first));
+        zip.file(`xl/drawings/_rels/drawing${d}.xml.rels`, rels(sh.charts.map((c, j) => rel(`rId${j + 1}`, 'chart', `../charts/chart${first + j}.xml`))));
+        ov.push(`<Override PartName="/xl/drawings/drawing${d}.xml" ContentType="${CT}drawing+xml"/>`);
+        sh.charts.forEach(c => { const k = ++nChart; zip.file(`xl/charts/chart${k}.xml`, chartXml(c)); ov.push(`<Override PartName="/xl/charts/chart${k}.xml" ContentType="${CT}drawingml.chart+xml"/>`); });
+      }
+      zip.file(`xl/worksheets/sheet${n}.xml`, sh.xml(sh.charts.length));
+      ov.push(`<Override PartName="/xl/worksheets/sheet${n}.xml" ContentType="${CT}spreadsheetml.worksheet+xml"/>`);
+    });
+    zip.file('xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView/></bookViews><sheets>${sheets.map((s, i) => `<sheet name="${x(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>`);
+    zip.file('xl/_rels/workbook.xml.rels', rels([...sheets.map((s, i) => rel(`rId${i + 1}`, 'worksheet', `worksheets/sheet${i + 1}.xml`)), rel(`rId${sheets.length + 1}`, 'styles', 'styles.xml')]));
+    zip.file('xl/styles.xml', STYLES);
+    zip.file('_rels/.rels', rels([rel('rId1', 'officeDocument', 'xl/workbook.xml')]));
+    zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="${CT}spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="${CT}spreadsheetml.styles+xml"/>${ov.join('')}</Types>`);
+    return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  }
+  return { Sheet, book, col };
+})();
+
+// Parcelas que entran en el análisis de una UV: las que tienen ficha empezada o hecha.
+function parcelasUv(f, uvId) { return sorted(f).filter(p => (p.uv || null) === uvId && p.estado !== 'pendiente'); }
+function libroUv(f, uv, ps) {
+  const { Sheet, col: L } = XL;
+  const nP = ps.length, R = f.radio, RR = f.radioReg;
+  const nOf = p => { const n = Number(String(p.num).replace(',', '.')); return String(p.num).trim() !== '' && !isNaN(n) ? n : String(p.num); };
+  const crit = p => typeof nOf(p) === 'number' ? String(nOf(p)) : `"${String(p.num).replace(/"/g, '""')}"`;
+  const qq = s => String(s).replace(/"/g, '""');
+  const uniq = a => [...new Set(a)];
+  const porFrecuencia = list => uniq(list).sort((a, b) => list.filter(v => v === b).length - list.filter(v => v === a).length);
+  const nom = c => spName(f, c);
+  const trees = ps.flatMap(p => p.f.pm.map((t, i) => ({ p, i, t })));
+  const spPM = porFrecuencia(trees.map(x => x.t.sp));
+  const minus = s => s ? String(s).toLowerCase() : null;
+
+  /* ---- Pies Mayores ---- */
+  const s1 = new Sheet('Pies Mayores', [[1, 1, 8], [2, 2, 6], [3, 3, 9], [4, 4, 26], [5, 6, 10], [7, 7, 8], [8, 9, 10]]);
+  s1.set('B2', `INVENTARIO FORESTAL ${String(f.nombre).toUpperCase()}`, 1);
+  s1.set('O2', uv.num === '-' ? String(uv.nombre).toUpperCase() : `UV Nº ${uv.num}: ${String(uv.nombre).toUpperCase()}`, 2);
+  ['Cantón', 'Id', 'Parcela', 'Sp', 'Dn (cm)', 'VIGOR', 'C.M.', 'Dn1 (cm)', 'Dn2 (cm)'].forEach((h, i) => s1.set(L(i) + 6, h, 3));
+  let r = 7;
+  trees.forEach(({ p, i, t }) => {
+    s1.set('A' + r, p.canton || null, 5); s1.set('B' + r, i + 1, 5); s1.set('C' + r, nOf(p), 5); s1.set('D' + r, t.sp, 5);
+    s1.set('E' + r, { f: `AVERAGE(H${r}:I${r})` }, 6); s1.set('F' + r, t.v, 5); s1.set('G' + r, t.cm, 5); s1.set('H' + r, t.d1, 5); s1.set('I' + r, t.d2, 5); r++;
+  });
+  const L1 = Math.max(7, r - 1), DR = `$D$7:$D$${L1}`, ER = `$E$7:$E$${L1}`;
+  r = L1 + 2;
+  spPM.forEach(sp => { s1.set('C' + r, `DNm ${nom(sp)}`, 7); s1.set('D' + r, sp, 8); s1.set('E' + r, { f: `IFERROR(ROUND(AVERAGEIF(${DR},"=${qq(sp)}",${ER}),1),0)` }, 8); r++; });
+  s1.set('C' + r, 'DNm GLOBAL', 7); s1.set('E' + r, { f: `IFERROR(ROUND(AVERAGE(${ER}),1),0)` }, 8); r += 2;
+  s1.set('C' + r, 'NÚMERO DE PIES', 2); r++;
+  const cnt = {}; spPM.forEach(sp => { s1.set('D' + r, sp, 8); s1.set('E' + r, { f: `COUNTIF(${DR},"=${qq(sp)}")` }, 8); cnt[sp] = r; r++; });
+  r++;
+  const rRad = r; s1.set('D' + r, 'Radio Parcela(m)', 7); s1.set('E' + r, R, 9); s1.set('F' + r, RR, 9); r++;
+  const rN = r; s1.set('D' + r, 'Nº Parcelas', 7); s1.set('E' + r, nP, 9); s1.set('F' + r, nP, 9); r++;
+  const rSI = r; s1.set('D' + r, 'Superficie de inventario (ha)', 7); s1.set('E' + r, { f: `(3.1416*(E${rRad}^2)*E${rN})/10000` }, 8); s1.set('F' + r, { f: `(3.1416*(F${rRad}^2)*F${rN})/10000` }, 8); r++;
+  const rSU = r; s1.set('D' + r, 'Superficie UV (ha)', 7); s1.set('E' + r, uv.sup != null ? +(+uv.sup).toFixed(2) : null, 9); r++;
+  s1.set('D' + r, 'Intensidad de inventario (%)', 7); s1.set('E' + r, { f: `IFERROR(E${rSI}/E${rSU}*100,"Sup. UV no disponible")` }, 8); r += 2;
+  s1.set('D' + r, 'DENSIDAD POR ESPECIE', 2); r++;
+  s1.set('D' + r, 'Especie', 3); s1.set('E' + r, 'Pies/ha', 3); s1.set('F' + r, '%', 3); r++;
+  const d0 = r, d1 = r + Math.max(spPM.length, 1) - 1;
+  spPM.forEach(sp => { s1.set('D' + r, nom(sp), 6); s1.set('E' + r, { f: `ROUND(E${cnt[sp]}/E${rSI},2)` }, 6); s1.set('F' + r, { f: `IFERROR(ROUND(E${r}/SUM($E$${d0}:$E$${d1})*100,1),0)` }, 6); r++; });
+  if (!spPM.length) r++;
+  s1.set('D' + r, 'TOTAL', 10); s1.set('E' + r, { f: `SUM(E${d0}:E${d1})` }, 10); r += 2;
+  const CD = [['10-20', '>=10', '<20'], ['20-30', '>=20', '<30'], ['30-40', '>=30', '<40'], ['40-50', '>=40', '<50'], ['50-60', '>=50', '<60'], ['>60', '>=60', null]];
+  spPM.forEach(sp => {
+    const t0 = r; s1.set('D' + r, `Distribución de clases diamétricas — ${nom(sp)}`, 2); r++;
+    const h = r; ['CD', 'Pies', 'Pies/ha', '%'].forEach((v, i) => s1.set('DEFG'[i] + r, v, 3)); r++;
+    const c0 = r, c1 = r + 5;
+    CD.forEach(([lab, a, b]) => {
+      s1.set('D' + r, lab, 6);
+      s1.set('E' + r, { f: `COUNTIFS(${DR},"=${qq(sp)}",${ER},"${a}"${b ? `,${ER},"${b}"` : ''})` }, 6);
+      s1.set('F' + r, { f: `ROUND(E${r}/$E$${rSI},2)` }, 6);
+      s1.set('G' + r, { f: `IFERROR(ROUND(E${r}/SUM($E$${c0}:$E$${c1})*100,1),0)` }, 6); r++;
+    });
+    s1.chart({ type: 'bar', title: `Distribución de clases diamétricas — ${nom(sp)}`, ser: `'Pies Mayores'!$F$${h}`, cat: `'Pies Mayores'!$D$${c0}:$D$${c1}`, val: `'Pies Mayores'!$F$${c0}:$F$${c1}`, n: 6, col: 8, row: t0 - 1, w: 8, h: 17 });
+    r = Math.max(r + 1, t0 + 19);
+  });
+
+  /* ---- Parcelas (vigor y copa muerta por especie) ---- */
+  const s2 = new Sheet('Parcelas', [[1, 4, 12], [5, 5, 8], [6, 9, 10], [10, 10, 8]]);
+  const PM = "'Pies Mayores'!";
+  let r2 = 2;
+  spPM.forEach(sp => {
+    s2.set('A' + r2, `Especie: ${nom(sp)} (${sp})`, 2); r2++;
+    ['Parcela', 'Vigor Bueno', 'Vigor Afectado', 'Vigor Decrépito', null, 'C.M. 0%', 'C.M. 5-25%', 'C.M. 26-50%', 'C.M. 51-75%', 'C.M. 76-95%'].forEach((v, i) => { if (v) s2.set(L(i) + r2, v, 3); }); r2++;
+    const p0 = r2;
+    ps.forEach(p => {
+      s2.set('A' + r2, nOf(p), 6);
+      [1, 2, 3].forEach((v, i) => s2.set(L(1 + i) + r2, { f: `COUNTIFS(${PM}$C:$C,${crit(p)},${PM}$D:$D,"${qq(sp)}",${PM}$F:$F,${v})` }, 6));
+      [1, 2, 3, 4, 5].forEach((v, i) => s2.set(L(5 + i) + r2, { f: `COUNTIFS(${PM}$C:$C,${crit(p)},${PM}$D:$D,"${qq(sp)}",${PM}$G:$G,${v})` }, 6));
+      r2++;
+    });
+    const p1 = r2 - 1, rs = r2;
+    s2.set('A' + r2, 'SUMAS', 10); for (let c = 1; c <= 9; c++) s2.set(L(c) + r2, { f: `SUM(${L(c)}${p0}:${L(c)}${p1})` }, 10); r2++;
+    const rt = r2; s2.set('A' + r2, 'TOTAL', 10); s2.set('B' + r2, { f: `SUM(B${rs}:D${rs})` }, 10); s2.set('F' + r2, { f: `SUM(F${rs}:J${rs})` }, 10); r2 += 2;
+    const rr = r2; s2.set('A' + r2, 'RESULTADOS (%)', 2); r2++;
+    s2.set('D' + r2, 'Vigor', 3); s2.set('E' + r2, '%', 3); s2.set('I' + r2, '% Copa muerta', 3); s2.set('J' + r2, '%', 3); r2++;
+    const v0 = r2, vig = ['Bueno', 'Afectado', 'Decrépito'], cms = ['0%', '5-25%', '26-50%', '51-75%', '76-95%'];
+    for (let i = 0; i < 5; i++) {
+      if (i < 3) { s2.set('D' + r2, vig[i], 6); s2.set('E' + r2, { f: `IFERROR(${L(1 + i)}${rs}/B${rt}*100,0)` }, 6); }
+      s2.set('I' + r2, cms[i], 6); s2.set('J' + r2, { f: `IFERROR(${L(5 + i)}${rs}/F${rt}*100,0)` }, 6); r2++;
+    }
+    s2.chart({ type: 'pie', title: `Vigor ${nom(sp)}`, cat: `Parcelas!$D$${v0}:$D$${v0 + 2}`, val: `Parcelas!$E$${v0}:$E$${v0 + 2}`, n: 3, col: 13, row: rr - 1, w: 5, h: 14 });
+    s2.chart({ type: 'pie', title: `% Copa muerta ${nom(sp)}`, cat: `Parcelas!$I$${v0}:$I$${v0 + 4}`, val: `Parcelas!$J$${v0}:$J$${v0 + 4}`, n: 5, col: 18, row: rr - 1, w: 5, h: 14 });
+    r2 = Math.max(r2 + 2, rr + 17);
+  });
+
+  /* ---- Regenerado estrato arbóreo ---- */
+  const RG = "'Regenerado estrato arbóreo'!";
+  const s3 = new Sheet('Regenerado estrato arbóreo', [[1, 1, 12], [2, 2, 8], [3, 3, 12], [4, 4, 18], [5, 5, 10], [6, 6, 26], [7, 7, 18], [8, 8, 24]]);
+  s3.set('D1', 'Regenerado', 1);
+  s3.set('A3', 'PIES MENORES', 2);
+  ['Parcela', 'Sp', 'Nº pies menores'].forEach((v, i) => s3.set(L(i) + 4, v, 3));
+  let r3 = 5;
+  const men = ps.flatMap(p => p.f.men.filter(m => m.n > 0).map(m => ({ p, m })));
+  men.forEach(({ p, m }) => { s3.set('A' + r3, nOf(p), 5); s3.set('B' + r3, m.sp, 5); s3.set('C' + r3, m.n, 5); r3++; });
+  const m1 = Math.max(5, r3 - 1); r3 = m1 + 2;
+  const spMen = porFrecuencia(men.map(x => x.m.sp)), totMen = {};
+  spMen.forEach(sp => { s3.set('A' + r3, 'TOTAL PARCELAS', 10); s3.set('B' + r3, sp, 6); s3.set('C' + r3, { f: `SUMIF($B$5:$B$${m1},"=${qq(sp)}",$C$5:$C$${m1})` }, 6); totMen[sp] = r3; r3++; });
+  r3 += 2;
+  s3.set('E' + r3, 'Total Nº Pies Menores', 2); s3.set('G' + r3, 'Total Pies/ha (Pies Menores)', 2); r3++;
+  const phMen = {};
+  spMen.forEach(sp => {
+    s3.set('E' + r3, nom(sp), 10); s3.set('G' + r3, nom(sp), 10); r3++;
+    s3.set('E' + r3, { f: `C${totMen[sp]}` }, 6); s3.set('G' + r3, { f: `E${r3}/((${nP}*((PI())*${R}^2))/10000)` }, 6); phMen[sp] = r3; r3++;
+  });
+  r3++;
+  const ax1 = r3; s3.set('E' + r3, '(aux gráfico) Especie', 8); s3.set('F' + r3, 'Pies menores/ha', 8); r3++;
+  spMen.forEach(sp => { s3.set('E' + r3, nom(sp), 8); s3.set('F' + r3, { f: `G${phMen[sp]}` }, 8); r3++; });
+  if (spMen.length) s3.chart({ type: 'pie', title: 'Nº Pies Menores/ha por especie', ser: `${RG}$F$${ax1}`, cat: `${RG}$E$${ax1 + 1}:$E$${ax1 + spMen.length}`, val: `${RG}$F$${ax1 + 1}:$F$${ax1 + spMen.length}`, n: spMen.length, col: 4, row: r3, w: 4, h: 16 });
+  r3 = Math.max(36, r3 + 19);
+  s3.set('A' + r3, 'REGENERADO (solo Nº viable)', 2); r3++;
+  ['Parcela', 'Sp', 'Tipo', 'Nº regenerado viable'].forEach((v, i) => s3.set(L(i) + r3, v, 3)); r3++;
+  const g0 = r3, regs = ps.flatMap(p => p.f.reg.map(g => ({ p, g })));
+  regs.forEach(({ p, g }) => { s3.set('A' + r3, nOf(p), 5); s3.set('B' + r3, g.sp, 5); s3.set('C' + r3, g.tipo === 'Semilla' ? 'Se' : (g.tipo || null), 5); s3.set('D' + r3, g.via || 0, 5); r3++; });
+  const g1 = Math.max(g0, r3 - 1); r3 = g1 + 2;
+  const spReg = porFrecuencia(regs.map(x => x.g.sp)), totReg = {};
+  spReg.forEach(sp => { s3.set('A' + r3, 'TOTAL PARCELAS', 10); s3.set('B' + r3, sp, 6); s3.set('D' + r3, { f: `SUMIF($B$${g0}:$B$${g1},"=${qq(sp)}",$D$${g0}:$D$${g1})` }, 6); totReg[sp] = r3; r3++; });
+  r3 += 2;
+  s3.set('F' + r3, 'Total Regenerado viable', 2); r3++;
+  ['Especie', 'Nº regenerado viable', 'Regenerado viable (pies/ha)'].forEach((v, i) => s3.set('FGH'[i] + r3, v, 3)); r3++;
+  const phReg = {};
+  spReg.forEach(sp => { s3.set('F' + r3, nom(sp), 6); s3.set('G' + r3, { f: `D${totReg[sp]}` }, 6); s3.set('H' + r3, { f: `G${r3}/((${nP}*(3.1416*${RR}^2))/10000)` }, 6); phReg[sp] = r3; r3++; });
+  r3 += 2;
+  const ax2 = r3; s3.set('F' + r3, '(aux gráfico) Especie', 8); s3.set('G' + r3, 'Regenerado viable (pies/ha)', 8); r3++;
+  spReg.forEach(sp => { s3.set('F' + r3, nom(sp), 8); s3.set('G' + r3, { f: `H${phReg[sp]}` }, 8); r3++; });
+  if (spReg.length) s3.chart({ type: 'pie', title: 'Regenerado viable (pies/ha) por especie', ser: `${RG}$G$${ax2}`, cat: `${RG}$F$${ax2 + 1}:$F$${ax2 + spReg.length}`, val: `${RG}$G$${ax2 + 1}:$G$${ax2 + spReg.length}`, n: spReg.length, col: 5, row: r3, w: 3, h: 16 });
+
+  /* ---- Matorral ---- */
+  const s4 = new Sheet('Matorral', [[1, 2, 12], [3, 3, 14], [4, 4, 12], [5, 5, 16], [6, 6, 10], [7, 7, 16]]);
+  ['Parcela', null, 'Tipo formación', 'Cobertura %', 'Sp/Nombre común', 'Hm (m)', 'Cobertura especie %'].forEach((v, i) => { if (v) s4.set(L(i) + 1, v, 3); });
+  let r4 = 2;
+  const fila = (p, tipo, cob, nombre, alt, pct) => { s4.set('A' + r4, nOf(p), 5); s4.set('C' + r4, tipo, 5); s4.set('D' + r4, cob ?? null, 5); s4.set('E' + r4, nombre || null, 5); s4.set('F' + r4, alt ?? null, 5); s4.set('G' + r4, pct ?? null, 5); r4++; };
+  const nomMat = m => m.nombre || m.sp;
+  ps.forEach(p => {
+    const fm = p.f.form || {};
+    if (p.f.mat.length) p.f.mat.forEach(m => fila(p, 'Matorral', fm.mat?.cob, nomMat(m), m.alt, m.pct));
+    else if (fm.mat?.cob != null) fila(p, 'Matorral', fm.mat.cob, null, fm.mat.alt, null);
+    if (fm.herb?.cob != null) fila(p, 'Herbazal', fm.herb.cob, null, fm.herb.alt, null);
+    if (fm.des?.cob != null) fila(p, 'Desnudo', fm.des.cob, null, null, null);
+  });
+  const e1 = Math.max(2, r4 - 1), ERg = `$E$2:$E$${e1}`; r4 = e1 + 2;
+  const mats = uniq(ps.flatMap(p => p.f.mat.map(nomMat))).filter(Boolean).sort((a, b) => a.localeCompare(b, 'es'));
+  const sci = n => ps.flatMap(p => p.f.mat).find(m => nomMat(m) === n)?.sp || null;
+  s4.set('A' + r4, 'PRESENCIA POR ESPECIE DE MATORRAL', 2); r4++;
+  s4.set('A' + r4, 'Especie', 3); s4.set('C' + r4, 'Nº presencia', 3); s4.set('D' + r4, '% presencia', 3); s4.set('E' + r4, 'Altura media (m)', 3); s4.set('F' + r4, '% cobertura media', 3); r4++;
+  const pr0 = r4;
+  mats.forEach(n => {
+    const s = sci(n);
+    s4.set('A' + r4, n, 6); s4.set('B' + r4, s && s !== n ? s : null, 6);
+    s4.set('C' + r4, { f: `COUNTIF(${ERg},"${qq(n)}")` }, 6); s4.set('D' + r4, { f: `ROUND(C${r4}/${nP}*100,1)` }, 6);
+    s4.set('E' + r4, { f: `IFERROR(ROUND(AVERAGEIF(${ERg},"${qq(n)}",$F$2:$F$${e1}),2),0)` }, 6);
+    s4.set('F' + r4, { f: `IFERROR(ROUND(AVERAGEIF(${ERg},"${qq(n)}",$G$2:$G$${e1}),1),0)` }, 6); r4++;
+  });
+  r4 += 2;
+  const gr = r4; s4.set('A' + r4, 'GRADO DE COBERTURA (media UV)', 2); r4++;
+  s4.set('A' + r4, 'Tipo', 3); s4.set('C' + r4, '% medio', 3); r4++;
+  const gc0 = r4;
+  [['Matorral', 'mat'], ['Herbazal', 'herb'], ['Desnudo', 'des']].forEach(([lab, k]) => {
+    const vs = ps.map(p => p.f.form?.[k]?.cob).filter(v => v != null);
+    s4.set('A' + r4, lab, 6); s4.set('C' + r4, vs.length ? +(vs.reduce((a, b) => a + b, 0) / vs.length).toFixed(1) : null, 6); r4++;
+  });
+  s4.chart({ type: 'pie', title: 'Grado de cobertura del estrato inferior (%) — media UV', cat: `Matorral!$A$${gc0}:$A$${gc0 + 2}`, val: `Matorral!$C$${gc0}:$C$${gc0 + 2}`, n: 3, col: 4, row: gr, w: 6, h: 14 });
+  if (mats.length) s4.chart({ type: 'pie', title: '% presencia por especie de matorral', cat: `Matorral!$A$${pr0}:$A$${pr0 + mats.length - 1}`, val: `Matorral!$D$${pr0}:$D$${pr0 + mats.length - 1}`, n: mats.length, col: 4, row: gr + 15, w: 6, h: 16 });
+
+  /* ---- Error de muestreo (pies mayores por parcela) ---- */
+  const s5 = new Sheet('Error', [[4, 4, 10], [5, 5, 22], [7, 7, 32], [8, 8, 16]]);
+  s5.set('D1', 'Parcela', 3); s5.set('E1', 'Pies mayores', 3);
+  ps.forEach((p, i) => { s5.set('D' + (2 + i), nOf(p), 6); s5.set('E' + (2 + i), { f: `COUNTIF('Pies Mayores'!$C$7:$C$${L1},${crit(p)})` }, 6); });
+  const ER5 = `E2:E${1 + nP}`;
+  s5.set('G7', 'Media (x)', 6); s5.set('H7', { f: `AVERAGE(${ER5})` }, 6);
+  s5.set('G8', 'Nº Parcelas', 6); s5.set('H8', { f: `COUNT(${ER5})` }, 6);
+  if (nP >= 2) {
+    s5.set('G9', 'Varianza', 6); s5.set('H9', { f: `_xlfn.VAR.S(${ER5})` }, 6);
+    s5.set('G10', 'Desviación típica o estándar (S)', 6); s5.set('H10', { f: `_xlfn.STDEV.S(${ER5})` }, 6);
+    s5.set('G11', 't-Student (95%)', 6); s5.set('H11', { f: `_xlfn.T.INV.2T(0.05,H8-1)` }, 6);
+    s5.set('G12', 'Error típico', 6); s5.set('H12', { f: 'H10/SQRT(H8)' }, 6);
+    s5.set('G13', 'Error absoluto', 6); s5.set('H13', { f: 'H11*H12' }, 6);
+    s5.set('G14', 'Error relativo (%)', 10); s5.set('H14', { f: 'H13/H7*100' }, 10);
+    s5.set('G15', 'CV (%)', 6); s5.set('H15', { f: 'H10/H7*100' }, 6);
+  } else s5.set('G9', 'Error de muestreo no calculable (1 sola parcela en la UV)', 6);
+
+  /* ---- Notas de campo (extra) ---- */
+  const s6 = new Sheet('Notas de campo (extra)', [[1, 1, 9], [2, 2, 10], [3, 5, 12], [6, 6, 10], [7, 7, 18], [8, 8, 30]]);
+  s6.set('A1', 'Notas de campo (extra) — datos recogidos en el estadillo fuera del modelo estándar', 2);
+  ['Parcela', 'Erosión', 'Defoliación', 'Nido rapaces', 'Tratamientos', 'Ganadería', 'Especies catalogadas', 'Observaciones'].forEach((v, i) => s6.set(L(i) + 3, v, 3));
+  ps.forEach((p, i) => {
+    const x = p.f, rr = 4 + i;
+    const siNo = (v, nota) => v === 'Sí' ? 'Sí' + (nota ? ': ' + nota : '') : (v || null);
+    [nOf(p), minus(x.eros), minus(x.defol), siNo(x.nido, x.nidoNota), siNo(x.trat, x.tratNota), x.gan === 'Sí' ? 'Sí' + (x.ganTipo.length ? ': ' + x.ganTipo.join(', ') : '') : (x.gan || null), x.cat ? x.cat.replace(/\n+/g, '; ') : null,
+      [x.obs, x.herb.length ? 'Herbivorismo: ' + x.herb.map(h => [h.sp, h.int, h.tipo].filter(Boolean).join(' ')).join('; ') : ''].filter(Boolean).join(' · ') || null
+    ].forEach((v, c) => s6.set(L(c) + rr, v, 5));
+  });
+
+  return [s1, s2, s3, s4, s5, s6];
+}
+async function exportUv(uvId) {
+  const f = F();
+  if (!window.JSZip) { toast('Falta el módulo de Excel. Abre la app una vez con conexión.', 5000); return; }
+  const grupos = uvId === '*' ? [...(f.uvs || []).map(u => u.id), null] : [uvId === 'sin' ? null : uvId];
+  const files = [];
+  for (const id of grupos) {
+    const ps = parcelasUv(f, id); if (!ps.length) continue;
+    const uv = id ? f.uvs.find(u => u.id === id) : { num: '-', nombre: (f.uvs || []).length ? 'Parcelas sin UV' : 'Toda la finca', sup: null };
+    const blob = await XL.book(libroUv(f, uv, ps));
+    const nombre = id ? `UV${String(uv.num).replace(/[^\w-]+/g, '')}_${safeName(uv.nombre).toUpperCase()}_analisis.xlsx` : `SIN_UV_${safeName(f.nombre)}_analisis.xlsx`;
+    files.push(new File([blob], nombre, { type: blob.type }));
+  }
+  if (!files.length) { toast('No hay parcelas con datos en esa UV todavía'); return; }
+  shareOrSave(files);
+}
+
 // KML con la posición actual de cada parcela (la movida en campo si se movió),
 // y en otra carpeta las posiciones originales con una línea hasta la nueva.
 function exportKml() {
@@ -1325,11 +1733,14 @@ document.addEventListener('click', e => {
       if (!confirm(`¿Mover la parcela ${p.num} a tu posición?${d != null ? `\nEstá a ${fDist(d)} del punto actual.` : ''}\nPrecisión del GPS: ±${Math.round(G.acc)} m.`)) break;
       if (p.latO == null && p.lat != null) { p.latO = p.lat; p.lonO = p.lon; }
       p.lat = G.lat; p.lon = G.lon; p.f.gps = { ...G };
-      touch(p); render(true); toast(`Punto movido (±${Math.round(G.acc)} m)`); break;
+      const uvAntes = p.uv; asignarUv(f, p);
+      touch(p); render(true); toast(`Punto movido (±${Math.round(G.acc)} m)${p.uv !== uvAntes ? ' · ahora en ' + uvLabel(uvOf(f, p)) : ''}`, 4000); break;
     }
     case 'moveBack':
       if (!confirm(`¿Devolver la parcela ${p.num} a la posición que puso la oficina?`)) break;
-      p.lat = p.latO; p.lon = p.lonO; p.latO = p.lonO = null; touch(p); render(true); break;
+      p.lat = p.latO; p.lon = p.lonO; p.latO = p.lonO = null; asignarUv(f, p); touch(p); render(true); break;
+    case 'uvX': exportUv(el.dataset.v); break;
+    case 'delUvs': if (confirm('¿Quitar las unidades de vegetación de esta finca? Las parcelas quedarán sin UV.')) { f.uvs = []; mark(f); vivas(f).forEach(q => { q.uv = null; q.uvFija = false; mark(q); }); save(); render(true); } break;
     case 'kml': exportKml(); break;
     case 'pmSet': {
       const fld = el.dataset.f, v = fld === 'sp' ? el.dataset.v : +el.dataset.v;
@@ -1366,6 +1777,7 @@ document.addEventListener('input', e => {
   if (el.dataset.sk) { S[el.dataset.sk] = el.value; save(); return; }
   if (el.dataset.fk) { const f = F(); f[el.dataset.fk] = el.hasAttribute('data-num') ? (num(el.value) ?? f[el.dataset.fk]) : el.value; mark(f); save(); return; }
   if (el.dataset.pk) { const [id, k] = el.dataset.pk.split('.'); const q = F().parcelas.find(x => x.id === id); q[k] = el.value; mark(q); save(); return; }
+  if (el.dataset.uvk) { const f = F(); const [id, k] = el.dataset.uvk.split('.'); const u = f.uvs.find(x => x.id === id); u[k] = el.hasAttribute('data-num') ? num(el.value) : el.value; u.editado = true; mark(f); save(); return; }
   if (el.id === 'lgEmail' || el.id === 'lgPass') return;
   if (el.dataset.k) { const p = P(); setPath(p, el.dataset.k, el.hasAttribute('data-num') ? num(el.value) : el.value); touch(p); }
 });
@@ -1381,6 +1793,12 @@ document.addEventListener('change', async e => {
   const p = P(), f = F();
   if (c === 'restore' && el.files[0]) restore(el.files[0]);
   if (c === 'importPts' && el.files[0]) importPts(el.files[0]);
+  if (c === 'importUv' && el.files[0]) importUvs(el.files[0]);
+  if (c === 'uvSel') {
+    const q = f.parcelas.find(x => x.id === el.dataset.id);
+    if (el.value === 'auto') { q.uvFija = false; asignarUv(f, q); } else { q.uvFija = true; q.uv = el.value === 'none' ? null : el.value; }
+    mark(q); save(); render(true);
+  }
   if (c === 'spList') {
     const list = el.value.split('\n').map(l => l.trim()).filter(Boolean).map(l => { const m = l.match(/^(\S+)\s+(.+)$/); return m ? [m[1], m[2]] : [l, l]; });
     if (list.length) { f.sp = list; mark(f); save(); toast('Especies guardadas'); }
