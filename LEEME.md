@@ -35,18 +35,17 @@ Comprueba que las tablets tienen GPS/GNSS; suelen tenerlo los modelos con **4G/L
 | campo | Ver las fincas, rellenar las fichas y **mover el punto** de una parcela a donde se mide |
 | oficina | Además, crear fincas, cargar los puntos (KMZ/KML/CSV), renumerar, borrar y ver la tabla resumen |
 
-## 3. Publicar la app
+## 3. Dónde está publicada
 
-La tablet solo da el GPS a páginas con **https**, así que la carpeta tiene que estar en un alojamiento web. Opciones gratuitas:
+- **App:** <https://rodrigofdez00.github.io/estadillos/>
+- **Código:** <https://github.com/rodrigofdez00/estadillos> (GitHub Pages publica la rama `main`)
+- **Base de datos:** proyecto de Supabase `bgxqwhfdvjleklwatrjq` (Europa Oeste)
 
-- **Netlify:** crea una cuenta, entra en <https://app.netlify.com/drop> y arrastra esta carpeta `estadillos`. Te da una dirección del tipo `https://estadillos-xxxx.netlify.app`.
-- **GitHub Pages** o **Cloudflare Pages**, si ya usáis alguno.
-
-Cada vez que cambie la app, se vuelve a subir la carpeta y las tablets se actualizan solas la siguiente vez que abran la app con conexión.
+Cada cambio que se sube a `main` se publica solo en uno o dos minutos. Las tablets reciben la versión nueva la siguiente vez que abren la app con conexión.
 
 ## 4. En cada tablet
 
-1. Abre la dirección con **Chrome** (Android) o **Safari** (iPad) y entra con tu correo y contraseña.
+1. Abre <https://rodrigofdez00.github.io/estadillos/> con **Chrome** (Android) o **Safari** (iPad) y entra con tu correo y contraseña.
 2. Instálala: en Chrome, menú ⋮ → **Añadir a pantalla de inicio**; en Safari, botón Compartir → **Añadir a pantalla de inicio**.
 3. Acepta el permiso de **ubicación**.
 4. Abre la app una vez con cobertura antes de ir al campo. A partir de ahí funciona sin conexión: las fichas se guardan en la tablet y se suben solas cuando hay red (o al conectarse al Wi-Fi de la oficina). En la cabecera se ve el estado (verde: todo subido; naranja: cambios pendientes).
