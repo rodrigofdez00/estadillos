@@ -1,0 +1,14 @@
+{
+  "name": "Estadillos de Inventario",
+  "short_name": "Estadillos",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F3F5F1",
+  "theme_color": "#1F4D3A",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
