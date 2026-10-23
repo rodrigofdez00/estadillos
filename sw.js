@@ -1,5 +1,5 @@
 // Guarda la app en la tablet para que funcione sin cobertura.
-const CACHE = 'estadillos-v5';
+const CACHE = 'estadillos-v6';
 const TESELAS = 'estadillos-teselas';   // mapa del IGN: se conserva entre versiones
 const LIBS = [
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
@@ -11,7 +11,8 @@ const LIBS = [
 const ASSETS = ['./', './index.html', './config.js', './manifest.webmanifest', './icon.svg', ...LIBS];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // Los archivos de la app se piden frescos al servidor; las librerías pueden venir de la caché.
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(u => LIBS.includes(u) ? u : new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -40,8 +41,9 @@ self.addEventListener('fetch', e => {
   // Archivos de la app: primero la red para recibir versiones nuevas; sin red, la copia guardada.
   // Lo demás (Supabase) pasa directo sin guardarse.
   if (url.origin !== self.location.origin) return;
+  // cache: 'no-cache' obliga a preguntar al servidor (GitHub Pages deja la página 10 min en la caché del navegador).
   e.respondWith(
-    fetch(req)
+    fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' })
       .then(res => { if (res.ok) { const cp = res.clone(); caches.open(CACHE).then(c => c.put(req.mode === 'navigate' ? './index.html' : req, cp)); } return res; })
       .catch(() => caches.match(req.mode === 'navigate' ? './index.html' : req))
   );
