@@ -22,12 +22,25 @@ language sql stable security definer set search_path = public as $$
   select exists (select 1 from perfiles where id = auth.uid() and rol = 'oficina');
 $$;
 
--- El perfil se crea solo al dar de alta un usuario en Authentication.
+-- Altas previstas: el rol (y el nombre) de cada correo antes de crear su cuenta.
+create table if not exists public.altas (
+  email   text primary key,
+  nombre  text,
+  rol     text not null default 'campo' check (rol in ('campo', 'oficina'))
+);
+alter table public.altas enable row level security;  -- solo se gestiona desde el panel de Supabase
+
+-- El perfil se crea solo al dar de alta un usuario en Authentication,
+-- con el rol que tenga su correo en "altas" (campo si no está).
 create or replace function public.nuevo_usuario() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare a altas%rowtype;
 begin
-  insert into perfiles (id, nombre)
-  values (new.id, coalesce(new.raw_user_meta_data->>'nombre', split_part(new.email, '@', 1)))
+  select * into a from altas where lower(email) = lower(new.email);
+  insert into perfiles (id, nombre, rol)
+  values (new.id,
+          coalesce(a.nombre, new.raw_user_meta_data->>'nombre', split_part(new.email, '@', 1)),
+          coalesce(a.rol, 'campo'))
   on conflict (id) do nothing;
   return new;
 end $$;
@@ -35,6 +48,17 @@ end $$;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.nuevo_usuario();
+
+-- Equipo de Pradifir
+insert into public.altas (email, rol) values
+  ('ordenacion@pradifir.com', 'oficina'),
+  ('encargado@pradifir.com',  'campo')
+on conflict (email) do update set rol = excluded.rol;
+
+-- Si alguna cuenta ya existía, se le aplica su rol ahora.
+update public.perfiles p set rol = a.rol, nombre = coalesce(a.nombre, p.nombre)
+from public.altas a join auth.users u on lower(u.email) = lower(a.email)
+where p.id = u.id;
 
 -- ---------------------------------------------------------------------
 -- Fincas y parcelas. La ficha de campo completa va en "ficha" (jsonb);
