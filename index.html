@@ -7,6 +7,7 @@
 <meta name="theme-color" content="#1F4D3A">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
 /* Herramienta de campo: alto contraste para pleno sol, botones grandes para el pulgar.
    Verde encina para la estructura, naranja de pintura de marcar para lo activo. */
@@ -197,6 +198,16 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .radar text { font: 700 13px var(--font); fill: var(--ink); }
 .radar .lbl2 { font-weight: 500; font-size: 11px; fill: var(--muted); }
 
+/* Mapa de satélite */
+.map { width: 100%; height: 360px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--idle-soft); z-index: 0; }
+.map-bar { gap: 8px; }
+.map-bar .btn { min-height: 44px; padding: 8px 12px; font-size: 14px; }
+.pm-ico { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; border: 2.5px solid #fff; color: #fff; font: 800 15px var(--font); box-shadow: 0 1px 4px rgb(0 0 0 / .5); cursor: pointer; }
+.pm-ico.st-pendiente { background: #6B7570; } .pm-ico.st-curso { background: #C77700; } .pm-ico.st-hecha { background: #2E7D32; }
+.leaflet-tooltip.rodal-lbl { background: rgb(0 0 0 / .45); border: 0; box-shadow: none; color: #fff; font: 700 12px var(--font); padding: 1px 6px; }
+.leaflet-tooltip.rodal-lbl::before { display: none; }
+.leaflet-container { font: 13px var(--font); }
+
 /* Navegación al punto */
 .nav { display: flex; align-items: center; gap: 14px; }
 .arrow { width: 84px; height: 84px; flex: none; border-radius: 50%; background: var(--idle-soft); display: grid; place-items: center; }
@@ -294,6 +305,7 @@ details.tipo .body { padding: 0 14px 14px; display: flex; flex-direction: column
   .pm-split { grid-template-columns: minmax(340px, 5fr) 6fr; }
   .pm-l { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 118px); }
   .finca-split .radar { max-height: none; }
+  .finca-split .map { height: 460px; }
   .finca-split > .col:first-child { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 66px); }
   .tipo-grid { display: grid; grid-template-columns: 1fr 1fr; align-items: start; }
   .photos { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
@@ -309,6 +321,7 @@ details.tipo .body { padding: 0 14px 14px; display: flex; flex-direction: column
 <div id="toast" hidden></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script>
@@ -369,7 +382,11 @@ function load() {
   // Con nube los datos llegan del servidor; sin nube se carga Domingo de ejemplo.
   if (!S || !Array.isArray(S.fincas)) S = CLOUD ? { op: '', fincas: [] } : seed();
   S.sync ||= { last: null };
+  // Cuando la app guarda campos nuevos (UV, linde, rodales…), se baja todo otra vez del servidor
+  // para que lo ya sincronizado con una versión anterior también los traiga.
+  if (S.syncV !== DATOS_V) { S.sync.last = null; S.syncV = DATOS_V; }
 }
+const DATOS_V = 3;
 function saveNow() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('No se pudo guardar en la tablet: ' + e.message, 5000); } }
 let saveT; function save() { clearTimeout(saveT); saveT = setTimeout(saveNow, 250); syncSoon(); }
 // Marca un cambio que hay que subir al servidor.
@@ -427,7 +444,7 @@ async function logout() {
 }
 
 const fToRow = f => ({ id: f.id, nombre: f.nombre, tm: f.tm || '', radio: f.radio, radio_reg: f.radioReg, huso: f.huso, equipo: f.equipo || '', especies: f.sp, uvs: f.uvs || [], linde: f.linde || [], borrada: !!f.borrada, updated_at: f.upd || 0 });
-const pToRow = (f, p) => ({ id: p.id, finca_id: f.id, num: String(p.num), canton: p.canton || '', lat: p.lat, lon: p.lon, lat_orig: p.latO ?? null, lon_orig: p.lonO ?? null, uv: p.uv ?? null, uv_fija: !!p.uvFija, estado: p.estado, ficha: p.f, borrada: !!p.borrada, updated_at: p.upd || 0 });
+const pToRow = (f, p) => ({ id: p.id, finca_id: f.id, num: String(p.num), canton: p.canton || '', lat: p.lat, lon: p.lon, lat_orig: p.latO ?? null, lon_orig: p.lonO ?? null, uv: p.uv ?? null, uv_fija: !!p.uvFija, rodal: p.rodal ?? null, estado: p.estado, ficha: p.f, borrada: !!p.borrada, updated_at: p.upd || 0 });
 function mergeF(r) {
   let f = S.fincas.find(x => x.id === r.id);
   const val = { nombre: r.nombre, tm: r.tm, radio: +r.radio, radioReg: +r.radio_reg, huso: r.huso, equipo: r.equipo, sp: r.especies?.length ? r.especies : SP_ARB.map(x => x.slice()), uvs: r.uvs || [], linde: r.linde || [], borrada: r.borrada, upd: +r.updated_at };
@@ -438,7 +455,7 @@ function mergeF(r) {
 function mergeP(r) {
   const f = S.fincas.find(x => x.id === r.finca_id); if (!f) return false;
   let p = f.parcelas.find(x => x.id === r.id);
-  const val = { num: r.num, canton: r.canton, lat: r.lat, lon: r.lon, latO: r.lat_orig ?? null, lonO: r.lon_orig ?? null, uv: r.uv ?? null, uvFija: !!r.uv_fija, estado: r.estado, f: Object.assign(newFicha(), r.ficha || {}), borrada: r.borrada, upd: +r.updated_at };
+  const val = { num: r.num, canton: r.canton, lat: r.lat, lon: r.lon, latO: r.lat_orig ?? null, lonO: r.lon_orig ?? null, uv: r.uv ?? null, uvFija: !!r.uv_fija, rodal: r.rodal ?? null, estado: r.estado, f: Object.assign(newFicha(), r.ficha || {}), borrada: r.borrada, upd: +r.updated_at };
   if (!p) { if (r.borrada) return false; f.parcelas.push({ id: r.id, ...val, dirty: false }); return true; }
   if (p.dirty && (p.upd || 0) > +r.updated_at) return false;
   Object.assign(p, val, { dirty: false }); return true;
@@ -477,7 +494,7 @@ async function sync(force) {
       data.forEach(mergeP);
     } else {
       for (const [f, p] of dP) {
-        const { data, error } = await sb.from('parcelas').update({ estado: p.estado, ficha: p.f, lat: p.lat, lon: p.lon, lat_orig: p.latO ?? null, lon_orig: p.lonO ?? null, uv: p.uv ?? null, updated_at: p.upd }).eq('id', p.id).select();
+        const { data, error } = await sb.from('parcelas').update({ estado: p.estado, ficha: p.f, lat: p.lat, lon: p.lon, lat_orig: p.latO ?? null, lon_orig: p.lonO ?? null, uv: p.uv ?? null, rodal: p.rodal ?? null, updated_at: p.upd }).eq('id', p.id).select();
         if (error) throw error;
         if (data.length) mergeP(data[0]); else p.dirty = false; // la oficina la borró o no existe
       }
@@ -716,7 +733,12 @@ function vFinca() {
 <main class="wrap ${isOf() ? 'office' : ''}">
   <div class="status">${gpsPill()}${syncPill()}</div>
   <div class="split finca-split"><div class="col">
-  ${ps.length ? `<svg class="radar" id="radar" viewBox="0 0 360 240" role="img" aria-label="Plano de las parcelas"></svg>` : ''}
+  ${ps.length ? (window.L ? `<div class="map" id="map" role="region" aria-label="Mapa de la finca"></div>
+  <div class="row map-bar">
+    <div class="seg">${Object.entries(FONDOS).map(([k, v]) => `<button type="button" data-act="fondo" data-v="${k}" aria-pressed="${(S.fondo || 'sat') === k}">${v.nombre}</button>`).join('')}</div>
+    <button type="button" class="btn ghost" data-act="centrar">Centrar en mí</button>
+    <button type="button" class="btn ghost" data-act="guardarMapa">Guardar mapa sin cobertura</button>
+  </div>` : `<svg class="radar" id="radar" viewBox="0 0 360 240" role="img" aria-label="Plano de las parcelas"></svg>`) : ''}
   </div><div class="col">
   ${ps.length ? gruposUv(f, ps).map(([u, lista]) => `
   <section class="sec">
@@ -729,7 +751,7 @@ function vFinca() {
     <div class="sec-h"><h2>Excel de análisis</h2><span class="note">Uno por UV, como el modelo de la oficina</span></div>
     <div class="row">
       ${(f.uvs || []).length
-        ? (f.uvs.map(u => `<button class="btn" data-act="uvX" data-v="${esc(u.id)}">UV ${esc(u.num)} · ${esc(u.nombre)}</button>`).join('') + (f.uvs.length > 1 ? '<button class="btn ghost" data-act="uvX" data-v="*">Todas las UV</button>' : '') + (ps.some(p => !p.uv && p.estado !== 'pendiente') ? '<button class="btn ghost" data-act="uvX" data-v="sin">Sin UV</button>' : ''))
+        ? (f.uvs.filter(u => ps.some(p => p.uv === u.id)).map(u => `<button class="btn" data-act="uvX" data-v="${esc(u.id)}">${esc(uvLabel(u))}</button>`).join('') + (f.uvs.length > 1 ? '<button class="btn ghost" data-act="uvX" data-v="*">Todas las UV</button>' : '') + (ps.some(p => !p.uv && p.estado !== 'pendiente') ? '<button class="btn ghost" data-act="uvX" data-v="sin">Sin UV</button>' : ''))
         : '<button class="btn" data-act="uvX" data-v="sin">Excel de análisis</button>'}
     </div>
     ${(f.uvs || []).length ? '' : '<p class="hint">Importa las unidades de vegetación en Ajustes para sacar un Excel por UV.</p>'}
@@ -754,7 +776,7 @@ function gruposUv(f, ps) {
 const itemParcela = p => `
       <button class="item" data-act="openP" data-id="${p.id}">
         <div class="pnum st-${p.estado}">${esc(p.num)}</div>
-        <div class="grow"><b>Parcela ${esc(p.num)}</b><div class="meta">${p.canton ? 'Cantón ' + esc(p.canton) + ' · ' : ''}<span class="tag st-${p.estado}">${ESTADO_TXT[p.estado]}</span>${p.latO != null ? ' <span class="tag st-curso">Movido</span>' : ''}${p.f.pm.length ? ` · ${p.f.pm.length} pies` : ''}</div></div>
+        <div class="grow"><b>Parcela ${esc(p.num)}</b><div class="meta">${p.rodal ? 'Rodal ' + esc(p.rodal) + ' · ' : ''}${p.canton ? 'Cantón ' + esc(p.canton) + ' · ' : ''}<span class="tag st-${p.estado}">${ESTADO_TXT[p.estado]}</span>${p.latO != null ? ' <span class="tag st-curso">Movido</span>' : ''}${p.f.pm.length ? ` · ${p.f.pm.length} pies` : ''}</div></div>
         <div class="dist" data-dist="${p.id}"></div>
       </button>`;
 // Tabla para la oficina: cómo va cada parcela y sus primeros resultados.
@@ -766,11 +788,93 @@ function vResumen(f, ps) {
   <section class="sec">
     <div class="sec-h"><h2>Resumen de la finca</h2><span class="note">${hechas.length ? `Media de ${hechas.length} parcelas: ${fmt(media('piesHa'), 0)} pies/ha · ${fmt(media('abHa'), 2)} m²/ha` : 'Sin datos todavía'}</span></div>
     <div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>Parcela</th>${(f.uvs || []).length ? '<th>UV</th>' : ''}<th>Estado</th><th>Fecha</th><th>Equipo</th><th class="n">Pies</th><th class="n">Pies/ha</th><th class="n">Dn medio</th><th class="n">AB m²/ha</th><th class="n">Menores/ha</th><th class="n">Regen./ha</th><th class="n">Fotos</th></tr></thead>
-      <tbody>${rs.map(([p, r]) => `<tr data-act="openP" data-id="${p.id}"><td><b>${esc(p.num)}</b>${p.canton ? ' <span class="hint">' + esc(p.canton) + '</span>' : ''}</td>${(f.uvs || []).length ? `<td>${uvOf(f, p) ? 'UV ' + esc(uvOf(f, p).num) : '—'}</td>` : ''}<td><span class="tag st-${p.estado}">${ESTADO_TXT[p.estado]}</span></td><td>${esc(p.f.fecha ? p.f.fecha.split('-').reverse().join('/') : '')}</td><td>${esc(p.f.equipo)}</td>
+      <thead><tr><th>Parcela</th>${(f.uvs || []).length ? '<th>UV</th><th>Rodal</th>' : ''}<th>Estado</th><th>Fecha</th><th>Equipo</th><th class="n">Pies</th><th class="n">Pies/ha</th><th class="n">Dn medio</th><th class="n">AB m²/ha</th><th class="n">Menores/ha</th><th class="n">Regen./ha</th><th class="n">Fotos</th></tr></thead>
+      <tbody>${rs.map(([p, r]) => `<tr data-act="openP" data-id="${p.id}"><td><b>${esc(p.num)}</b>${p.canton ? ' <span class="hint">' + esc(p.canton) + '</span>' : ''}</td>${(f.uvs || []).length ? `<td>${uvOf(f, p) ? 'UV ' + esc(uvOf(f, p).num) : '—'}</td><td>${esc(p.rodal || '—')}</td>` : ''}<td><span class="tag st-${p.estado}">${ESTADO_TXT[p.estado]}</span></td><td>${esc(p.f.fecha ? p.f.fecha.split('-').reverse().join('/') : '')}</td><td>${esc(p.f.equipo)}</td>
         <td class="n">${r.n || ''}</td><td class="n">${r.n ? fmt(r.piesHa, 0) : ''}</td><td class="n">${r.dnm != null ? fmt(r.dnm) : ''}</td><td class="n">${r.n ? fmt(r.abHa, 2) : ''}</td><td class="n">${r.men ? fmt(r.menHa, 0) : ''}</td><td class="n">${r.regV ? fmt(r.regHa, 0) : ''}</td><td class="n">${p.f.fotos.length || ''}</td></tr>`).join('')}</tbody>
     </table></div>
   </section>`;
+}
+/* ============ Mapa de satélite (Leaflet + IGN) ============
+   Ortofoto PNOA o mapa base del IGN de fondo; encima, UV, rodales, linde y parcelas.
+   Las teselas vistas quedan guardadas en la tablet; también se pueden descargar antes de salir. */
+const IGN = (servicio, capa, fmt) => `https://www.ign.es/wmts/${servicio}?service=WMTS&request=GetTile&version=1.0.0&layer=${capa}&style=default&tilematrixset=GoogleMapsCompatible&tilematrix={z}&tilerow={y}&tilecol={x}&format=${fmt}`;
+const FONDOS = {
+  sat: { nombre: 'Satélite', url: IGN('pnoa-ma', 'OI.OrthoimageCoverage', 'image/jpeg'), max: 20, attr: 'Ortofoto PNOA © IGN' },
+  mapa: { nombre: 'Mapa', url: IGN('ign-base', 'IGNBaseTodo', 'image/jpeg'), max: 18, attr: 'Mapa base © IGN' }
+};
+const TONOS = ['#FFD54F', '#4FC3F7', '#FF8A65', '#BA68C8', '#81C784', '#F06292'];
+let MAPA = null;
+function drawMap() {
+  const el = $('#map'); if (!el) { if (MAPA) { MAPA.remove(); MAPA = null; } return; }
+  const f = F();
+  if (MAPA && MAPA.getContainer() !== el) { MAPA.remove(); MAPA = null; }
+  if (!MAPA) {
+    MAPA = L.map(el, { zoomControl: true, attributionControl: true, maxZoom: 20 });
+    MAPA.attributionControl.setPrefix(false);
+    MAPA._yo = L.layerGroup(); MAPA._datos = L.layerGroup();
+    ponerFondo(S.fondo || 'sat');
+    MAPA._datos.addTo(MAPA); MAPA._yo.addTo(MAPA);
+    MAPA._ajustado = false;
+  }
+  const g = MAPA._datos; g.clearLayers();
+  const ll = r => r.map(([lon, lat]) => [lat, lon]);
+  const forma = pg => [ll(pg.outer), ...pg.holes.map(ll)];
+  (f.uvs || []).forEach((u, i) => {
+    const c = TONOS[i % TONOS.length];
+    L.polygon(u.polys.map(forma), { color: c, weight: 2.5, fillColor: c, fillOpacity: .18 }).bindTooltip(esc(uvLabel(u)), { sticky: true }).addTo(g);
+    (u.rodales || []).forEach(r => {
+      L.polygon(r.polys.map(forma), { color: '#ffffff', weight: 1.2, dashArray: '4 3', fill: false, interactive: false }).addTo(g);
+      // Etiqueta en el centro del trozo más grande del rodal.
+      const big = r.polys.reduce((a, b) => ringArea(b.outer) > ringArea(a.outer) ? b : a).outer;
+      let A = 0, cx = 0, cy = 0;
+      for (let i = 0, j = big.length - 1; i < big.length; j = i++) { const k = big[j][0] * big[i][1] - big[i][0] * big[j][1]; A += k; cx += (big[j][0] + big[i][0]) * k; cy += (big[j][1] + big[i][1]) * k; }
+      const c = A ? [cy / (3 * A), cx / (3 * A)] : [big[0][1], big[0][0]];
+      L.tooltip({ permanent: true, direction: 'center', className: 'rodal-lbl' }).setLatLng(c).setContent(esc(r.nombre)).addTo(g);
+    });
+  });
+  if ((f.linde || []).length) L.polygon(f.linde.map(forma), { color: '#ffffff', weight: 3, fill: false, interactive: false, dashArray: '10 5' }).addTo(g);
+  const ps = vivas(f).filter(p => p.lat != null);
+  ps.filter(p => p.latO != null).forEach(p => {
+    L.polyline([[p.latO, p.lonO], [p.lat, p.lon]], { color: '#FF9800', weight: 2, dashArray: '4 3', interactive: false }).addTo(g);
+    L.circleMarker([p.latO, p.lonO], { radius: 6, color: '#FF9800', weight: 2, fill: true, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(g);
+  });
+  ps.forEach(p => L.marker([p.lat, p.lon], { icon: L.divIcon({ className: '', html: `<span class="pm-ico st-${p.estado}" data-act="openP" data-id="${p.id}">${esc(p.num)}</span>`, iconSize: [34, 34], iconAnchor: [17, 17] }), keyboard: false }).addTo(g));
+  if (!MAPA._ajustado) {
+    // Encuadra la finca cuando la caja ya tiene su tamaño definitivo.
+    const b = L.featureGroup(g.getLayers().filter(l => l.getBounds || l.getLatLng)).getBounds();
+    if (b.isValid()) { MAPA.fitBounds(b, { padding: [16, 16], maxZoom: 18 }); MAPA._ajustado = true; const m = MAPA; requestAnimationFrame(() => { m.invalidateSize(); m.fitBounds(b, { padding: [16, 16], maxZoom: 18 }); }); }
+  }
+  mapaYo();
+}
+function ponerFondo(k) {
+  const fd = FONDOS[k] || FONDOS.sat;
+  if (MAPA._fondo) MAPA.removeLayer(MAPA._fondo);
+  MAPA._fondo = L.tileLayer(fd.url, { maxNativeZoom: fd.max, maxZoom: 20, attribution: fd.attr, crossOrigin: true }).addTo(MAPA);
+  MAPA._fondo.bringToBack();
+  $$('[data-act="fondo"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === k)));
+}
+function mapaYo() {
+  if (!MAPA) return; MAPA._yo.clearLayers(); if (!G) return;
+  L.circle([G.lat, G.lon], { radius: G.acc, color: '#1565C0', weight: 1, fillColor: '#1565C0', fillOpacity: .12, interactive: false }).addTo(MAPA._yo);
+  L.circleMarker([G.lat, G.lon], { radius: 7, color: '#fff', weight: 2.5, fillColor: '#1565C0', fillOpacity: 1, interactive: false }).addTo(MAPA._yo);
+}
+// Descarga las teselas de la finca (ortofoto) para verla sin cobertura.
+async function guardarMapa() {
+  const f = F();
+  const pts = [...(f.linde || []), ...(f.uvs || []).flatMap(u => u.polys)].flatMap(pg => pg.outer).concat(vivas(f).filter(p => p.lat != null).map(p => [p.lon, p.lat]));
+  if (!pts.length) { toast('La finca no tiene puntos ni polígonos'); return; }
+  const lons = pts.map(p => p[0]), lats = pts.map(p => p[1]), m = 0.004;
+  const [w, e, s, n] = [Math.min(...lons) - m, Math.max(...lons) + m, Math.min(...lats) - m, Math.max(...lats) + m];
+  const tx = (lon, z) => Math.floor((lon + 180) / 360 * 2 ** z), ty = (lat, z) => Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * 2 ** z);
+  const urls = [];
+  for (const k of ['sat', 'mapa']) for (let z = 12; z <= FONDOS[k].max && z <= (k === 'sat' ? 19 : 17); z++)
+    for (let x = tx(w, z); x <= tx(e, z); x++) for (let y = ty(n, z); y <= ty(s, z); y++) urls.push(FONDOS[k].url.replace('{z}', z).replace('{x}', x).replace('{y}', y));
+  if (urls.length > 3000) { toast('La finca es demasiado grande para guardarla entera'); return; }
+  let hechas = 0, fallos = 0; const b = $('[data-act="guardarMapa"]');
+  const uno = async u => { try { const r = await fetch(u, { mode: 'cors' }); if (!r.ok) fallos++; } catch (e) { fallos++; } hechas++; if (b) b.textContent = `Guardando mapa… ${Math.round(hechas / urls.length * 100)} %`; };
+  for (let i = 0; i < urls.length; i += 8) await Promise.all(urls.slice(i, i + 8).map(uno));
+  if (b) b.textContent = 'Mapa guardado ✓';
+  toast(fallos ? `Mapa guardado con ${fallos} teselas sin descargar: repítelo con mejor conexión` : `Mapa guardado para usarlo sin cobertura (${urls.length} teselas)`, 5000);
 }
 function drawRadar() {
   const svg = $('#radar'); if (!svg) return;
@@ -832,7 +936,7 @@ function vCfg() {
   <section class="sec">
     <div class="sec-h"><h2>Puntos de inventario</h2></div>
     <p class="hint">Los prepara la oficina. Admite el KMZ o KML exportado del SIG (el nombre de cada punto es el nº de parcela) o un CSV con columnas <b>parcela; lat; lon</b> o <b>parcela; x; y</b> en UTM del huso indicado arriba. Si una parcela ya existe, solo se actualizan sus coordenadas.</p>
-    <label class="btn">Importar puntos<input type="file" accept=".kmz,.kml,.csv,.txt" data-change="importPts" hidden></label>
+    <label class="btn">Importar puntos<input type="file" accept=".kmz,.kml,.csv,.txt,.zip,.shp,.dbf,.prj,.cpg,.shx" multiple data-change="importPts" hidden></label>
     <div class="rows">
       ${ps.map(p => `<div class="r"><div class="r-h"><b>Parcela ${esc(p.num)}</b><button class="del" data-act="delP" data-id="${p.id}">Eliminar</button></div>
         <div class="grid3"><label class="fld"><span>Nº parcela</span><input data-pk="${p.id}.num" value="${esc(p.num)}"></label><label class="fld"><span>Cantón</span><input data-pk="${p.id}.canton" value="${esc(p.canton)}"></label>
@@ -846,17 +950,17 @@ function vCfg() {
   </section>
   <section class="sec">
     <div class="sec-h"><h2>Unidades de vegetación</h2></div>
-    <p class="hint">Importa el KML o KMZ de unidades de vegetación (o de rodales con su campo UV) exportado del SIG. Los polígonos con el mismo identificador de UV se juntan y cada parcela se asigna a la UV en la que cae su punto. Si un punto se mueve en campo, se vuelve a calcular.</p>
+    <p class="hint">Importa la capa de rodales del SIG con sus campos de UV y de rodal (por ejemplo <b>UV_id</b>, <b>UV</b>, <b>Rodal</b> y <b>Sup</b>). Vale el shape (elige a la vez el .shp, el .dbf y el .prj), un .zip con ellos o un KML/KMZ. Los polígonos con el mismo identificador forman una UV y, dentro de ella, sus rodales. Cada parcela queda en la UV y el rodal donde cae su punto, y se recalcula si se mueve en campo.</p>
     <div class="grid2">
-      <label class="btn">Importar UV<input type="file" accept=".kmz,.kml" data-change="importUv" hidden></label>
-      <label class="btn ghost">${(f.linde || []).length ? 'Cambiar linde' : 'Importar linde'}<input type="file" accept=".kmz,.kml" data-change="importLinde" hidden></label>
+      <label class="btn">Importar UV y rodales<input type="file" accept=".kmz,.kml,.zip,.shp,.dbf,.prj,.cpg,.shx" multiple data-change="importUv" hidden></label>
+      <label class="btn ghost">${(f.linde || []).length ? 'Cambiar linde' : 'Importar linde'}<input type="file" accept=".kmz,.kml,.zip,.shp,.dbf,.prj,.cpg,.shx" multiple data-change="importLinde" hidden></label>
     </div>
     ${(f.linde || []).length ? `<p class="hint">Linde de la finca: ${fmt(uvArea(f.linde), 2)} ha · ${f.linde.length} ${f.linde.length === 1 ? 'polígono' : 'polígonos'}. Se dibuja en el plano.</p>` : ''}
     ${(f.uvs || []).length ? '<button class="btn danger" data-act="delUvs">Quitar las UV</button>' : ''}
     <div class="rows">
       ${(f.uvs || []).map(u => { const n = ps.filter(p => p.uv === u.id).length; return `<div class="r">
         <div class="grid3"><label class="fld"><span>Nº UV</span><input data-uvk="${esc(u.id)}.num" value="${esc(u.num)}"></label><label class="fld"><span>Nombre</span><input data-uvk="${esc(u.id)}.nombre" value="${esc(u.nombre)}"></label><label class="fld"><span>Superficie (ha)</span><input data-uvk="${esc(u.id)}.sup" data-num inputmode="decimal" value="${esc(fmt(u.sup, 2))}"></label></div>
-        <div class="hint">${n} ${n === 1 ? 'parcela' : 'parcelas'} · ${u.polys.length} ${u.polys.length === 1 ? 'polígono' : 'polígonos'}</div></div>`; }).join('')}
+        <div class="hint">${n} ${n === 1 ? 'parcela' : 'parcelas'} · ${u.polys.length} ${u.polys.length === 1 ? 'polígono' : 'polígonos'}${(u.rodales || []).length ? ' · rodales ' + u.rodales.map(r => `<b>${esc(r.nombre)}</b> ${fmt(r.sup, 2)} ha`).join(', ') : ''}</div></div>`; }).join('')}
       ${(f.uvs || []).length && ps.some(p => !p.uv) ? `<p class="hint">Sin UV: parcelas ${ps.filter(p => !p.uv).map(p => esc(p.num)).join(', ')}</p>` : ''}
     </div>
   </section>
@@ -887,7 +991,7 @@ function vFicha() {
   return `
 <header class="bar"><div class="bar-in">
   <button class="ib" data-act="back" aria-label="Volver a la finca">${ICON.back}</button>
-  <div class="grow"><h1>Parcela ${esc(p.num)}</h1><div class="sub">${esc(f.nombre)}${uvOf(f, p) ? ' · UV ' + esc(uvOf(f, p).num) : ''}${p.canton ? ' · Cantón ' + esc(p.canton) : ''} · r = ${fmt(f.radio)} m</div></div>
+  <div class="grow"><h1>Parcela ${esc(p.num)}</h1><div class="sub">${esc(f.nombre)}${uvOf(f, p) ? ' · ' + esc(uvLabel(uvOf(f, p)).replace(/ · .*/, '')) : ''}${p.rodal ? ' · Rodal ' + esc(p.rodal) : ''}${p.canton ? ' · Cantón ' + esc(p.canton) : ''} · r = ${fmt(f.radio)} m</div></div>
   <button class="pill-btn ${p.estado === 'hecha' ? 'done' : ''}" data-act="estado">${p.estado === 'hecha' ? '✓ Hecha' : 'Terminar'}</button>
 </div></header>
 <nav class="tabs" role="tablist">${TABS.map(([k, l]) => { const b = badge(k, p); return `<button class="tab" role="tab" data-act="tab" data-v="${k}" aria-selected="${V.tab === k}">${l}${b !== '' && b !== 0 ? `<span class="b">${b}</span>` : ''}</button>`; }).join('')}</nav>
@@ -1142,7 +1246,7 @@ function live() {
   if (V.v === 'finca') {
     const f = F(); if (!f) return;
     f.parcelas.forEach(p => { const el = $(`[data-dist="${p.id}"]`); if (!el) return; el.innerHTML = G && p.lat != null ? `${fDist(dist(G, p))}<small>${rumbo(bearing(G, p))}</small>` : ''; });
-    drawRadar();
+    if ($('#map')) { if (!MAPA || MAPA.getContainer() !== $('#map')) drawMap(); else mapaYo(); } else drawRadar();
   }
   if (V.v === 'ficha' && V.tab === 'datos') {
     const p = P(); const nav = $('[data-live="nav"]'); if (!nav || !p || p.lat == null) return;
@@ -1157,33 +1261,97 @@ function live() {
   }
 }
 
-/* ============ Importar puntos ============ */
-async function unzipKml(buf) {
+/* ============ Capas del SIG: KML, KMZ y shapefile ============
+   Todas se leen a una lista de elementos {name, attrs, polys:[{outer, holes}], pt:[lon,lat]}
+   en coordenadas geográficas. Del shapefile se lee la proyección del .prj (UTM ETRS89). */
+async function unzipAll(buf) {
   const dv = new DataView(buf); let eo = -1;
   for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eo = i; break; }
-  if (eo < 0) throw new Error('El KMZ no es un archivo comprimido válido');
-  const n = dv.getUint16(eo + 10, true); let off = dv.getUint32(eo + 16, true);
+  if (eo < 0) throw new Error('No es un archivo comprimido válido');
+  const n = dv.getUint16(eo + 10, true), out = new Map(); let off = dv.getUint32(eo + 16, true);
   for (let k = 0; k < n; k++) {
     const method = dv.getUint16(off + 10, true), size = dv.getUint32(off + 20, true), nl = dv.getUint16(off + 28, true), el = dv.getUint16(off + 30, true), cl = dv.getUint16(off + 32, true), lho = dv.getUint32(off + 42, true);
     const name = new TextDecoder().decode(new Uint8Array(buf, off + 46, nl)); off += 46 + nl + el + cl;
-    if (!/\.kml$/i.test(name)) continue;
+    if (name.endsWith('/')) continue;
     const data = new Uint8Array(buf, lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true), size);
-    if (method === 0) return new TextDecoder().decode(data);
-    return await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+    out.set(name, method === 0 ? data.slice() : new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()));
   }
+  return out;
+}
+async function unzipKml(buf) {
+  for (const [n, d] of await unzipAll(buf)) if (/\.kml$/i.test(n)) return new TextDecoder().decode(d);
   throw new Error('No hay ningún KML dentro del KMZ');
 }
-function parseKml(txt) {
+function kmlFeats(txt) {
   const doc = new DOMParser().parseFromString(txt, 'application/xml');
   return [...doc.getElementsByTagName('Placemark')].map(pm => {
     // Las posiciones originales que exporta esta app no son parcelas.
     if (pm.getElementsByTagName('styleUrl')[0]?.textContent.trim() === '#original') return null;
-    const c = pm.getElementsByTagName('Point')[0]?.getElementsByTagName('coordinates')[0]?.textContent.trim(); if (!c) return null;
-    const [lon, lat] = c.split(/[\s,]+/).map(Number);
-    let numero = pm.getElementsByTagName('name')[0]?.textContent.trim() || '', canton = '';
-    for (const sd of pm.getElementsByTagName('SimpleData')) { const k = (sd.getAttribute('name') || '').toLowerCase(); if (!numero && /^(id|parcela|num)/.test(k)) numero = sd.textContent.trim(); if (/canton|cantón/.test(k)) canton = sd.textContent.trim(); }
-    return { num: numero, lat, lon, canton };
+    const polys = [...pm.getElementsByTagName('Polygon')].map(pg => ({
+      outer: ringOf(pg.getElementsByTagName('outerBoundaryIs')[0]),
+      holes: [...pg.getElementsByTagName('innerBoundaryIs')].map(ringOf).filter(r => r.length > 2)
+    })).filter(p => p.outer.length > 2);
+    const pt = ringOf(pm.getElementsByTagName('Point')[0])[0] || null;
+    return { name: pm.getElementsByTagName('name')[0]?.textContent.trim() || '', attrs: kmlAttrs(pm), polys, pt };
   }).filter(Boolean);
+}
+function leerShp(shp, dbf, prj, cpg, husoDef) {
+  const txt = prj ? new TextDecoder().decode(prj) : '';
+  const proyectado = /PROJCS/i.test(txt);
+  let zona = (txt.match(/UTM[_ ]?zone[_ ]?(\d+)/i) || [])[1];
+  if (!zona && proyectado) { const cm = txt.match(/Central_Meridian"\s*,\s*(-?[\d.]+)/i); if (cm) zona = Math.round((+cm[1] + 183) / 6); }
+  if (proyectado && !zona) throw new Error('Proyección no reconocida: usa UTM ETRS89 o coordenadas geográficas');
+  const tr = (x, y) => {
+    if ((txt && !proyectado) || (!txt && Math.abs(x) <= 180 && Math.abs(y) <= 90)) return [+x.toFixed(7), +y.toFixed(7)];
+    const g = fromUTM(x, y, +(zona || husoDef || 30)); return [+g.lon.toFixed(7), +g.lat.toFixed(7)];
+  };
+  // Atributos (.dbf)
+  const attrs = [];
+  if (dbf) {
+    const dv = new DataView(dbf.buffer, dbf.byteOffset, dbf.byteLength);
+    const nRec = dv.getUint32(4, true), hl = dv.getUint16(8, true), rl = dv.getUint16(10, true);
+    const cp = cpg ? new TextDecoder().decode(cpg).trim() : '';
+    let dec; try { dec = new TextDecoder(/^(utf-?8|65001)$/i.test(cp) ? 'utf-8' : (!cp || /1252|ansi|latin/i.test(cp)) ? 'windows-1252' : cp); } catch (e) { dec = new TextDecoder('windows-1252'); }
+    const campos = [];
+    for (let o = 32; o + 32 <= hl && dbf[o] !== 0x0D; o += 32) campos.push({ n: new TextDecoder().decode(dbf.subarray(o, o + 11)).replace(/\0.*$/s, '').trim(), t: String.fromCharCode(dbf[o + 11]), l: dbf[o + 16] });
+    for (let i = 0; i < nRec; i++) {
+      let p = hl + i * rl + 1; const a = {};
+      campos.forEach(c => { let v = dec.decode(dbf.subarray(p, p + c.l)).trim(); if (/[NF]/.test(c.t) && v !== '' && !isNaN(Number(v))) v = String(Number(v)); a[c.n] = v; p += c.l; });
+      attrs.push(a);
+    }
+  }
+  // Geometrías (.shp): puntos y polígonos, con o sin Z/M
+  const dv = new DataView(shp.buffer, shp.byteOffset, shp.byteLength), feats = [];
+  for (let o = 100, i = 0; o + 12 <= shp.byteLength; i++) {
+    const len = dv.getInt32(o + 4) * 2, c = o + 8, tipo = dv.getInt32(c, true), a = attrs[i] || {};
+    if ([1, 11, 21].includes(tipo)) feats.push({ name: '', attrs: a, polys: [], pt: tr(dv.getFloat64(c + 4, true), dv.getFloat64(c + 12, true)) });
+    else if ([5, 15, 25].includes(tipo)) {
+      const np = dv.getInt32(c + 36, true), nPts = dv.getInt32(c + 40, true), p0 = c + 44 + 4 * np, polys = [];
+      // Anillos exteriores en sentido horario; los huecos, al revés.
+      const horario = r => r.reduce((s, [x1, y1], j) => { const [x2, y2] = r[(j + 1) % r.length]; return s + (x2 - x1) * (y2 + y1); }, 0) > 0;
+      for (let k = 0; k < np; k++) {
+        const a0 = dv.getInt32(c + 44 + 4 * k, true), a1 = k + 1 < np ? dv.getInt32(c + 48 + 4 * k, true) : nPts, raw = [];
+        for (let j = a0; j < a1; j++) raw.push([dv.getFloat64(p0 + 16 * j, true), dv.getFloat64(p0 + 16 * j + 8, true)]);
+        const g = raw.map(([x, y]) => tr(x, y));
+        if (horario(raw) || !polys.length) polys.push({ outer: g, holes: [] });
+        else (polys.find(pp => inRing(g[0][0], g[0][1], pp.outer)) || polys[polys.length - 1]).holes.push(g);
+      }
+      feats.push({ name: '', attrs: a, polys, pt: null });
+    }
+    o = c + len;
+  }
+  return feats;
+}
+// Lee lo que se elija: KML, KMZ, los archivos del shape (.shp, .dbf, .prj…) o un .zip con ellos.
+async function leerCapa(files, husoDef) {
+  const ext = {};
+  for (const fl of files) {
+    if (/\.(zip|kmz)$/i.test(fl.name)) { for (const [n, d] of await unzipAll(await fl.arrayBuffer())) { const e = (n.match(/\.(\w+)$/) || [])[1]?.toLowerCase(); if (e && !ext[e]) ext[e] = d; } }
+    else { const e = (fl.name.match(/\.(\w+)$/) || [])[1]?.toLowerCase(); if (e) ext[e] = new Uint8Array(await fl.arrayBuffer()); }
+  }
+  if (ext.kml) return kmlFeats(new TextDecoder().decode(ext.kml));
+  if (ext.shp) { if (!ext.dbf) toast('Falta el .dbf: se cargan las formas sin sus datos', 4000); return leerShp(ext.shp, ext.dbf, ext.prj, ext.cpg, husoDef); }
+  throw new Error('Elige un KML o KMZ, los archivos del shape (.shp, .dbf y .prj a la vez) o un .zip con ellos');
 }
 function parseCsv(txt, huso) {
   const lines = txt.split(/\r?\n/).filter(l => l.trim());
@@ -1204,12 +1372,15 @@ function parseCsv(txt, huso) {
     return { num: r[idx.n], lat, lon, canton: idx.c >= 0 ? r[idx.c] : '' };
   }).filter(Boolean);
 }
-async function importPts(file) {
+async function importPts(files) {
   const f = F(); let pts;
   try {
-    if (/\.kmz$/i.test(file.name)) pts = parseKml(await unzipKml(await file.arrayBuffer()));
-    else if (/\.kml$/i.test(file.name)) pts = parseKml(await file.text());
-    else pts = parseCsv(await file.text(), f.huso || 30);
+    const csv = [...files].find(x => /\.(csv|txt)$/i.test(x.name));
+    if (csv) pts = parseCsv(await csv.text(), f.huso || 30);
+    else pts = (await leerCapa(files, f.huso)).filter(x => x.pt).map(x => {
+      const a = x.attrs, k = Object.keys(a), kn = k.find(c => /^(parcela|n_?parcela|num|numero|número|id|name|nombre)$/i.test(c.trim())), kc = k.find(c => /cant/i.test(c));
+      return { num: String(x.name || (kn ? a[kn] : '') || '').trim(), lat: x.pt[1], lon: x.pt[0], canton: kc ? a[kc] : '' };
+    });
   } catch (e) { toast('No se pudo leer el archivo: ' + e.message, 5000); return; }
   if (!pts.length) { toast('El archivo no tiene puntos'); return; }
   let nuevas = 0, act = 0, movidas = 0;
@@ -1242,32 +1413,36 @@ function kmlAttrs(pm) {
 const ringOf = el => (el?.getElementsByTagName('coordinates')[0]?.textContent.trim().split(/\s+/) || [])
   .map(s => s.split(',').map(Number)).filter(c => c.length >= 2 && !isNaN(c[0]) && !isNaN(c[1]))
   .map(([lo, la]) => [+lo.toFixed(7), +la.toFixed(7)]);
-function parseUvKml(txt) {
-  const doc = new DOMParser().parseFromString(txt, 'application/xml');
-  const feats = [...doc.getElementsByTagName('Placemark')].map(pm => {
-    const polys = [...pm.getElementsByTagName('Polygon')].map(pg => ({
-      outer: ringOf(pg.getElementsByTagName('outerBoundaryIs')[0]),
-      holes: [...pg.getElementsByTagName('innerBoundaryIs')].map(ringOf).filter(r => r.length > 2)
-    })).filter(p => p.outer.length > 2);
-    return { name: pm.getElementsByTagName('name')[0]?.textContent.trim() || '', attrs: kmlAttrs(pm), polys };
-  }).filter(x => x.polys.length);
+// Junta los polígonos en UV (por su identificador) y, dentro de cada UV, en rodales.
+function agruparUv(feats) {
+  feats = feats.filter(x => x.polys.length);
   if (!feats.length) throw new Error('El archivo no tiene polígonos');
-  // Campos: identificador de la UV, su nombre y su superficie (ha).
   const keys = Object.keys(feats[0].attrs);
   const find = re => keys.find(k => re.test(k.trim()));
-  const kId = find(/^(uv_?id|id_?uv|cod_?uv|n_?uv|num_?uv|uv_?n|uv_?num)$/i) || find(/^uv$/i) || find(/unidad|vegetac/i);
+  const kId = find(/^(uv_?id|id_?uv|cod_?uv|n_?uv|num_?uv|uv_?n|uv_?num)$/i);
   const kName = find(/^(uv|nombre_?uv|uv_?nombre|unidad|vegetacion|vegetación|formacion|formación|desc_?uv)$/i) || find(/unidad|vegetac/i);
   const kSup = find(/^(sup|superf|superficie|area|área|sup_?ha|ha)$/i);
+  const kRod = find(/^(rodal|cod_?rodal|id_?rodal|rodal_?id|n_?rodal|rodal_?n|num_?rodal)$/i);
+  const slug = s => String(s).normalize('NFD').replace(/[^\w]+/g, '_');
+  const supDe = ft => { const s = kSup ? num(ft.attrs[kSup]) : null; return s != null ? s : uvArea(ft.polys); };
   const groups = new Map();
   feats.forEach((ft, i) => {
-    const key = (kId ? ft.attrs[kId] : '') || (kName ? ft.attrs[kName] : '') || ft.name || String(i + 1);
+    const id = kId ? String(ft.attrs[kId] || '').trim() : '', nombre = (kName && ft.attrs[kName]) || ft.name || '';
+    const key = id || nombre || String(i + 1);
     let g = groups.get(key);
-    if (!g) { g = { id: 'uv_' + String(key).normalize('NFD').replace(/[^\w]+/g, '_'), num: key, nombre: (kName && ft.attrs[kName]) || ft.name || ('UV ' + key), supAttr: 0, hasSup: false, polys: [] }; groups.set(key, g); }
-    g.polys.push(...ft.polys);
-    const s = kSup ? num(ft.attrs[kSup]) : null; if (s != null) { g.supAttr += s; g.hasSup = true; }
+    if (!g) { g = { id: 'uv_' + slug(key), num: id || (kId ? '—' : key), nombre: nombre || ('UV ' + key), sup: 0, polys: [], rodales: new Map() }; groups.set(key, g); }
+    g.polys.push(...ft.polys); g.sup += supDe(ft);
+    const rod = kRod ? String(ft.attrs[kRod] || '').trim() : '';
+    if (rod) {
+      let r = g.rodales.get(rod);
+      if (!r) { r = { id: g.id + '_' + slug(rod), nombre: rod, sup: 0, polys: [] }; g.rodales.set(rod, r); }
+      r.polys.push(...ft.polys); r.sup += supDe(ft);
+    }
   });
-  return [...groups.values()].map(g => ({ id: g.id, num: g.num, nombre: g.nombre, sup: +(g.hasSup ? g.supAttr : uvArea(g.polys)).toFixed(4), polys: g.polys }))
-    .sort((a, b) => (parseFloat(a.num) || 0) - (parseFloat(b.num) || 0) || String(a.num).localeCompare(b.num));
+  return [...groups.values()].map(g => ({
+    id: g.id, num: g.num, nombre: g.nombre, sup: +g.sup.toFixed(4), polys: g.polys,
+    rodales: [...g.rodales.values()].map(r => ({ ...r, sup: +r.sup.toFixed(4) })).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { numeric: true }))
+  })).sort((a, b) => (a.num === '—') - (b.num === '—') || (parseFloat(a.num) || 0) - (parseFloat(b.num) || 0) || String(a.num).localeCompare(b.num));
 }
 // Superficie en ha proyectando cada anillo a metros en torno a su latitud media.
 function ringArea(r) {
@@ -1284,24 +1459,32 @@ function inRing(lon, lat, r) {
   }
   return inside;
 }
-const uvDe = (f, lat, lon) => lat == null ? null : (f.uvs || []).find(u => u.polys.some(p => inRing(lon, lat, p.outer) && !p.holes.some(h => inRing(lon, lat, h))))?.id || null;
-// Asigna la UV por posición salvo que la oficina la haya fijado a mano.
-function asignarUv(f, p) { if (p.uvFija) return false; const u = uvDe(f, p.lat, p.lon); if ((p.uv || null) !== u) { p.uv = u; return true; } return false; }
+function uvDe(f, lat, lon) {
+  if (lat == null) return { uv: null, rodal: null };
+  const dentro = pg => inRing(lon, lat, pg.outer) && !pg.holes.some(h => inRing(lon, lat, h));
+  const u = (f.uvs || []).find(u => u.polys.some(dentro));
+  return { uv: u?.id || null, rodal: (u?.rodales || []).find(r => r.polys.some(dentro))?.nombre || null };
+}
+// UV y rodal por posición. La UV no se toca si la oficina la ha fijado a mano.
+function asignarUv(f, p) {
+  const { uv, rodal } = uvDe(f, p.lat, p.lon), antes = (p.uv || null) + '|' + (p.rodal || null);
+  if (!p.uvFija) p.uv = uv;
+  p.rodal = rodal;
+  return antes !== (p.uv || null) + '|' + (p.rodal || null);
+}
 const uvOf = (f, p) => (f.uvs || []).find(u => u.id === p.uv) || null;
-const uvLabel = u => u ? `UV ${u.num} · ${u.nombre}` : 'Sin UV';
-// Linde de la finca: todos los polígonos del KML, solo para dibujarlo y saber la superficie.
-async function importLinde(file) {
+const uvLabel = u => !u ? 'Sin UV' : u.num && u.num !== '—' ? `UV ${u.num} · ${u.nombre}` : u.nombre;
+// Linde de la finca: solo para dibujarlo y saber la superficie.
+async function importLinde(files) {
   const f = F(); let polys;
-  try {
-    const txt = /\.kmz$/i.test(file.name) ? await unzipKml(await file.arrayBuffer()) : await file.text();
-    polys = parseUvKml(txt).flatMap(u => u.polys);
-  } catch (e) { toast('No se pudo leer el archivo: ' + e.message, 5000); return; }
+  try { polys = (await leerCapa(files, f.huso)).flatMap(x => x.polys); if (!polys.length) throw new Error('El archivo no tiene polígonos'); }
+  catch (e) { toast('No se pudo leer el archivo: ' + e.message, 5000); return; }
   f.linde = polys; mark(f); save(); render(true);
   toast(`Linde importado · ${fmt(uvArea(polys), 2)} ha`);
 }
-async function importUvs(file) {
+async function importUvs(files) {
   const f = F(); let uvs;
-  try { uvs = parseUvKml(/\.kmz$/i.test(file.name) ? await unzipKml(await file.arrayBuffer()) : await file.text()); }
+  try { uvs = agruparUv(await leerCapa(files, f.huso)); }
   catch (e) { toast('No se pudo leer el archivo: ' + e.message, 5000); return; }
   // Conserva los nombres que la oficina ya hubiera corregido.
   const prev = new Map((f.uvs || []).map(u => [u.id, u]));
@@ -1311,7 +1494,8 @@ async function importUvs(file) {
   vivas(f).forEach(p => { if (asignarUv(f, p)) mark(p); if (p.uv) dentro++; });
   save(); render(true);
   const fuera = vivas(f).length - dentro;
-  toast(`${uvs.length} UV importadas · ${dentro} parcelas asignadas${fuera ? ` · ${fuera} fuera de todas las UV` : ''}`, 5000);
+  const nRod = uvs.reduce((a, u) => a + u.rodales.length, 0);
+  toast(`${uvs.length} UV${nRod ? ` y ${nRod} rodales` : ''} importados · ${dentro} parcelas asignadas${fuera ? ` · ${fuera} fuera de todas las UV` : ''}`, 5000);
 }
 
 /* ============ Exportar ============ */
@@ -1330,7 +1514,7 @@ function exportXlsx() {
   const f = F();
   if (!window.XLSX) { toast('Falta el módulo de Excel. Abre la app una vez con conexión.', 5000); return; }
   const ps = sorted(f);
-  const parc = [['Finca', 'T.M.', 'Cantón', 'Parcela', 'Estado', 'Fecha', 'Equipo', 'Lat. punto', 'Lon. punto', 'Punto movido', 'Lat. original', 'Lon. original', 'Desplazamiento (m)', 'Lat. GPS', 'Lon. GPS', `X UTM`, `Y UTM`, 'Huso', 'Precisión GPS (m)', 'Desvío al punto (m)', 'Orientación', 'Radio (m)', 'Nº pies mayores', 'Pies mayores/ha', 'Dn medio (cm)', 'AB (m²/ha)', 'Nº pies menores', 'Pies menores/ha', 'Regenerado viable', 'Regenerado viable/ha']];
+  const parc = [['Finca', 'T.M.', 'UV', 'Rodal', 'Cantón', 'Parcela', 'Estado', 'Fecha', 'Equipo', 'Lat. punto', 'Lon. punto', 'Punto movido', 'Lat. original', 'Lon. original', 'Desplazamiento (m)', 'Lat. GPS', 'Lon. GPS', `X UTM`, `Y UTM`, 'Huso', 'Precisión GPS (m)', 'Desvío al punto (m)', 'Orientación', 'Radio (m)', 'Nº pies mayores', 'Pies mayores/ha', 'Dn medio (cm)', 'AB (m²/ha)', 'Nº pies menores', 'Pies menores/ha', 'Regenerado viable', 'Regenerado viable/ha']];
   const pm = [['Cantón', 'Parcela', 'Nº', 'Sp', 'Especie', 'Dn1 (cm)', 'Dn2 (cm)', 'Dn (cm)', 'Vigor', 'C.M.']];
   const tipo = [['Cantón', 'Parcela', 'P', 'Nºpm', 'Sp', 'Dn1 (cm)', 'Dn2 (cm)', 'Dco1 (m)', 'Dco2 (m)', 'Ds1 (cm)', 'Ds2 (cm)', 'Di1 (cm)', 'Di2 (cm)', 'Cor1 (mm)', 'Cor2 (mm)', 'Hd (m)', 'Nr', 'Lr (dm)', 'Dr (cm)', 'Td']];
   const men = [['Cantón', 'Parcela', 'Sp', 'Especie', 'Nº']];
@@ -1340,7 +1524,7 @@ function exportXlsx() {
   const notas = [['Cantón', 'Parcela', 'Erosión', 'Defoliación', 'Nido rapaces', 'Tratamientos', 'Ganadería', 'Especies catalogadas', 'Herbivorismo', 'Observaciones', 'Fotos']];
   ps.forEach(p => {
     const x = p.f, r = resumen(f, p), g = x.gps, u = g ? toUTM(g.lat, g.lon, f.huso) : null, c = p.canton || null, n = p.num;
-    parc.push([f.nombre, f.tm, c, n, ESTADO_TXT[p.estado], x.fecha || null, x.equipo || null, p.lat ?? null, p.lon ?? null, p.latO != null ? 'Sí' : 'No', p.latO ?? null, p.lonO ?? null, p.latO != null ? +dist({ lat: p.latO, lon: p.lonO }, p).toFixed(1) : null, g?.lat ?? null, g?.lon ?? null, u ? Math.round(u.x) : null, u ? Math.round(u.y) : null, u?.zone ?? null, g ? Math.round(g.acc) : null, g && p.lat != null ? Math.round(dist(g, p)) : null, x.orient || null, f.radio, r.n, +r.piesHa.toFixed(1), r.dnm != null ? +r.dnm.toFixed(1) : null, +r.abHa.toFixed(2), r.men, +r.menHa.toFixed(1), r.regV, +r.regHa.toFixed(1)]);
+    parc.push([f.nombre, f.tm, uvOf(f, p) ? uvLabel(uvOf(f, p)) : null, p.rodal || null, c, n, ESTADO_TXT[p.estado], x.fecha || null, x.equipo || null, p.lat ?? null, p.lon ?? null, p.latO != null ? 'Sí' : 'No', p.latO ?? null, p.lonO ?? null, p.latO != null ? +dist({ lat: p.latO, lon: p.lonO }, p).toFixed(1) : null, g?.lat ?? null, g?.lon ?? null, u ? Math.round(u.x) : null, u ? Math.round(u.y) : null, u?.zone ?? null, g ? Math.round(g.acc) : null, g && p.lat != null ? Math.round(dist(g, p)) : null, x.orient || null, f.radio, r.n, +r.piesHa.toFixed(1), r.dnm != null ? +r.dnm.toFixed(1) : null, +r.abHa.toFixed(2), r.men, +r.menHa.toFixed(1), r.regV, +r.regHa.toFixed(1)]);
     x.pm.forEach((t, i) => pm.push([c, n, i + 1, t.sp, spName(f, t.sp), t.d1, t.d2, dnOf(t) != null ? +dnOf(t).toFixed(1) : null, t.v, t.cm]));
     QUAD.forEach(q => { const T = x.tipo[q] || {}; if (!Object.keys(T).length) return; tipo.push([c, n, q, T.nPm ? +T.nPm : null, T.sp || null, T.dn1, T.dn2, T.dco1, T.dco2, T.ds1, T.ds2, T.di1, T.di2, T.cor1, T.cor2, T.hd, T.nr, T.lr, T.dr, T.td || null].map(v => v === undefined ? null : v)); });
     x.men.forEach(m => men.push([c, n, m.sp, spName(f, m.sp), m.n || 0]));
@@ -1753,6 +1937,9 @@ document.addEventListener('click', e => {
       if (!confirm(`¿Devolver la parcela ${p.num} a la posición que puso la oficina?`)) break;
       p.lat = p.latO; p.lon = p.lonO; p.latO = p.lonO = null; asignarUv(f, p); touch(p); render(true); break;
     case 'uvX': exportUv(el.dataset.v); break;
+    case 'fondo': S.fondo = el.dataset.v; save(); if (MAPA) ponerFondo(S.fondo); break;
+    case 'centrar': if (!G) toast(gErr || 'Aún no hay señal GPS'); else if (MAPA) MAPA.setView([G.lat, G.lon], Math.max(MAPA.getZoom(), 17)); break;
+    case 'guardarMapa': if (!navigator.onLine) toast('Hace falta conexión para guardar el mapa'); else guardarMapa(); break;
     case 'delUvs': if (confirm('¿Quitar las unidades de vegetación de esta finca? Las parcelas quedarán sin UV.')) { f.uvs = []; mark(f); vivas(f).forEach(q => { q.uv = null; q.uvFija = false; mark(q); }); save(); render(true); } break;
     case 'kml': exportKml(); break;
     case 'pmSet': {
@@ -1805,9 +1992,9 @@ document.addEventListener('change', async e => {
   const el = e.target, c = el.dataset.change; if (!c) return;
   const p = P(), f = F();
   if (c === 'restore' && el.files[0]) restore(el.files[0]);
-  if (c === 'importPts' && el.files[0]) importPts(el.files[0]);
-  if (c === 'importUv' && el.files[0]) importUvs(el.files[0]);
-  if (c === 'importLinde' && el.files[0]) importLinde(el.files[0]);
+  if (c === 'importPts' && el.files.length) importPts(el.files);
+  if (c === 'importUv' && el.files.length) importUvs(el.files);
+  if (c === 'importLinde' && el.files.length) importLinde(el.files);
   if (c === 'uvSel') {
     const q = f.parcelas.find(x => x.id === el.dataset.id);
     if (el.value === 'auto') { q.uvFija = false; asignarUv(f, q); } else { q.uvFija = true; q.uv = el.value === 'none' ? null : el.value; }

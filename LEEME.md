@@ -55,12 +55,15 @@ La app se usa en vertical y en horizontal. En tablet, la ficha se reparte en dos
 ## 5. Flujo de trabajo
 
 1. **Oficina:** crea la finca (nombre, término, radio de parcela y de regenerado, huso UTM) y carga los puntos desde **Ajustes → Importar puntos**. Vale el KMZ que exporta el SIG (el nombre de cada punto es el nº de parcela) o un CSV `parcela;lat;lon` o `parcela;x;y`.
-   Después carga las **unidades de vegetación** en **Ajustes → Importar UV**, con el KMZ/KML de UV o de rodales que lleve el campo de UV (por ejemplo `UV_id`, `UV` y `Sup`).
-   - Los polígonos con el mismo identificador forman una UV.
+   Después carga las **unidades de vegetación y rodales** en **Ajustes → Importar UV y rodales**, con la capa de rodales del SIG (campos `UV_id`, `UV`, `Rodal` y `Sup`), y el **linde** en **Importar linde**.
+   - Vale el **shapefile**: elige a la vez el `.shp`, el `.dbf` y el `.prj`, o un `.zip` con ellos. La proyección se lee del `.prj` (UTM ETRS89 de cualquier huso). También valen KML/KMZ.
+   - Los polígonos con el mismo identificador forman una UV y, dentro de ella, cada rodal.
    - La superficie se toma del campo `Sup` si existe; si no, se calcula.
    - Cada parcela se asigna a la UV en la que cae su punto, y se recalcula si se mueve en campo.
    - El nº, el nombre y la superficie de cada UV se pueden corregir. También se puede fijar a mano la UV de una parcela.
-2. **Campo:** abre la finca, elige la parcela y sigue la flecha hasta el punto.
+2. **Campo:** abre la finca. El mapa muestra la ortofoto PNOA del IGN (o el mapa base) con las UV, los rodales, el linde, las parcelas y tu posición.
+   - Antes de salir al campo, con conexión, pulsa **Guardar mapa sin cobertura**: descarga la ortofoto de la finca a la tablet. Para Domingo son unas 960 teselas, menos de medio minuto.
+   - Toca una parcela en el mapa o en la lista y sigue la flecha hasta el punto.
    - Si el punto cae en un sitio no representativo (camino, roquedo, charca…), ponte donde vas a medir y pulsa **Datos → Mover el punto aquí**. La posición de la oficina se guarda y se puede recuperar con **Volver al original**.
    - Rellena las pestañas y pulsa **Terminar**.
 3. **Oficina:** ve el avance en la tabla resumen de la finca y exporta:

@@ -1,8 +1,11 @@
-// Guarda la app en el móvil para que funcione sin cobertura.
-const CACHE = 'estadillos-v3';
+// Guarda la app en la tablet para que funcione sin cobertura.
+const CACHE = 'estadillos-v4';
+const TESELAS = 'estadillos-teselas';   // mapa del IGN: se conserva entre versiones
 const LIBS = [
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js'
 ];
 const ASSETS = ['./', './index.html', './config.js', './manifest.webmanifest', './icon.svg', ...LIBS];
@@ -14,7 +17,7 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE && k !== TESELAS).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -28,8 +31,13 @@ self.addEventListener('fetch', e => {
     e.respondWith(caches.match(req).then(hit => hit || fetch(req).then(res => { const cp = res.clone(); caches.open(CACHE).then(c => c.put(req, cp)); return res; })));
     return;
   }
+  // Teselas del IGN: la guardada si la hay; si no, se descarga y se guarda.
+  if (url.hostname === 'www.ign.es' && url.pathname.startsWith('/wmts/')) {
+    e.respondWith(caches.open(TESELAS).then(c => c.match(req.url).then(hit => hit || fetch(req).then(res => { if (res.ok) c.put(req.url, res.clone()); return res; }))));
+    return;
+  }
   // Archivos de la app: primero la red para recibir versiones nuevas; sin red, la copia guardada.
-  // Lo demás (Supabase, mapas) pasa directo sin guardarse.
+  // Lo demás (Supabase) pasa directo sin guardarse.
   if (url.origin !== self.location.origin) return;
   e.respondWith(
     fetch(req)
