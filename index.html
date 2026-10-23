@@ -334,7 +334,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 const num = v => { if (v === '' || v == null) return null; const n = parseFloat(String(v).replace(',', '.')); return isNaN(n) ? null : n; };
 const fmt = (n, d = 1) => n == null || isNaN(n) ? '' : n.toLocaleString('es-ES', { maximumFractionDigits: d });
 const today = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
-const safeName = s => String(s || 'finca').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w-]+/g, '_');
+const safeName = s => String(s || 'finca').normalize('NFD').replace(/\p{M}/gu, '').replace(/[^\w-]+/g, '_');
 function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, ms); }
 function getPath(o, k) { return k.split('.').reduce((a, p) => a == null ? a : a[p], o); }
 function setPath(o, k, v) { const ps = k.split('.'); const last = ps.pop(); const t = ps.reduce((a, p) => a[p] ??= {}, o); t[last] = v; }
