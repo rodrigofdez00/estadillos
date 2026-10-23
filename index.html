@@ -426,11 +426,11 @@ async function logout() {
   S.me = null; saveNow(); go({ v: 'home' });
 }
 
-const fToRow = f => ({ id: f.id, nombre: f.nombre, tm: f.tm || '', radio: f.radio, radio_reg: f.radioReg, huso: f.huso, equipo: f.equipo || '', especies: f.sp, uvs: f.uvs || [], borrada: !!f.borrada, updated_at: f.upd || 0 });
+const fToRow = f => ({ id: f.id, nombre: f.nombre, tm: f.tm || '', radio: f.radio, radio_reg: f.radioReg, huso: f.huso, equipo: f.equipo || '', especies: f.sp, uvs: f.uvs || [], linde: f.linde || [], borrada: !!f.borrada, updated_at: f.upd || 0 });
 const pToRow = (f, p) => ({ id: p.id, finca_id: f.id, num: String(p.num), canton: p.canton || '', lat: p.lat, lon: p.lon, lat_orig: p.latO ?? null, lon_orig: p.lonO ?? null, uv: p.uv ?? null, uv_fija: !!p.uvFija, estado: p.estado, ficha: p.f, borrada: !!p.borrada, updated_at: p.upd || 0 });
 function mergeF(r) {
   let f = S.fincas.find(x => x.id === r.id);
-  const val = { nombre: r.nombre, tm: r.tm, radio: +r.radio, radioReg: +r.radio_reg, huso: r.huso, equipo: r.equipo, sp: r.especies?.length ? r.especies : SP_ARB.map(x => x.slice()), uvs: r.uvs || [], borrada: r.borrada, upd: +r.updated_at };
+  const val = { nombre: r.nombre, tm: r.tm, radio: +r.radio, radioReg: +r.radio_reg, huso: r.huso, equipo: r.equipo, sp: r.especies?.length ? r.especies : SP_ARB.map(x => x.slice()), uvs: r.uvs || [], linde: r.linde || [], borrada: r.borrada, upd: +r.updated_at };
   if (!f) { if (r.borrada) return false; S.fincas.push({ id: r.id, parcelas: [], ...val, dirty: false }); return true; }
   if (f.dirty && (f.upd || 0) > +r.updated_at) return false; // lo local es más nuevo: se subirá
   Object.assign(f, val, { dirty: false }); return true;
@@ -778,8 +778,8 @@ function drawRadar() {
   if (!ps.length) { svg.remove(); return; }
   const pts = ps.map(p => ({ lat: p.lat, lon: p.lon }));
   ps.forEach(p => { if (p.latO != null) pts.push({ lat: p.latO, lon: p.lonO }); });
-  const uvs = f.uvs || [];
-  uvs.forEach(u => u.polys.forEach(pg => pg.outer.forEach(([lon, lat]) => pts.push({ lat, lon }))));
+  const uvs = f.uvs || [], linde = f.linde || [];
+  [...uvs.flatMap(u => u.polys), ...linde].forEach(pg => pg.outer.forEach(([lon, lat]) => pts.push({ lat, lon })));
   const near = G && dist(G, pts[0]) < 5000;
   if (near) pts.push(G);
   const lat0 = pts.reduce((a, p) => a + p.lat, 0) / pts.length, lon0 = pts.reduce((a, p) => a + p.lon, 0) / pts.length;
@@ -801,6 +801,7 @@ function drawRadar() {
   const tonos = ['#2E7D32', '#1565C0', '#A86500', '#6A1B9A', '#00838F', '#AD1457'];
   const ring = r => r.map(([lon, lat], i) => { const [x, y] = P2({ lat, lon }); return (i ? 'L' : 'M') + x.toFixed(1) + ' ' + y.toFixed(1); }).join('') + 'Z';
   uvs.forEach((u, i) => { h += `<path d="${u.polys.map(pg => ring(pg.outer) + pg.holes.map(ring).join('')).join('')}" fill="${tonos[i % tonos.length]}" fill-opacity=".12" stroke="${tonos[i % tonos.length]}" stroke-opacity=".7" stroke-width="1" fill-rule="evenodd"><title>${esc(uvLabel(u))}</title></path>`; });
+  if (linde.length) h += `<path d="${linde.map(pg => ring(pg.outer)).join('')}" fill="none" stroke="var(--ink)" stroke-width="1.6" stroke-dasharray="6 3"><title>Linde de la finca</title></path>`;
   if (uvs.length) h += `<g class="lbl2">${uvs.map((u, i) => `<text x="${W - 10}" y="${Hh - 12 - (uvs.length - 1 - i) * 14}" text-anchor="end" style="fill:${tonos[i % tonos.length]};paint-order:stroke;stroke:var(--surface);stroke-width:3px">■ UV ${esc(u.num)} · ${esc(u.nombre)}</text>`).join('')}</g>`;
   // Punto movido: hueco en la posición original y línea hasta la nueva.
   ps.filter(p => p.latO != null).forEach(p => { const [x0, y0] = P2({ lat: p.latO, lon: p.lonO }), [x1, y1] = P2(p); h += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="var(--warn)" stroke-width="2" stroke-dasharray="4 3"/><circle cx="${x0}" cy="${y0}" r="6" fill="var(--surface)" stroke="var(--warn)" stroke-width="2"/>`; });
@@ -848,8 +849,10 @@ function vCfg() {
     <p class="hint">Importa el KML o KMZ de unidades de vegetación (o de rodales con su campo UV) exportado del SIG. Los polígonos con el mismo identificador de UV se juntan y cada parcela se asigna a la UV en la que cae su punto. Si un punto se mueve en campo, se vuelve a calcular.</p>
     <div class="grid2">
       <label class="btn">Importar UV<input type="file" accept=".kmz,.kml" data-change="importUv" hidden></label>
-      ${(f.uvs || []).length ? '<button class="btn danger" data-act="delUvs">Quitar las UV</button>' : ''}
+      <label class="btn ghost">${(f.linde || []).length ? 'Cambiar linde' : 'Importar linde'}<input type="file" accept=".kmz,.kml" data-change="importLinde" hidden></label>
     </div>
+    ${(f.linde || []).length ? `<p class="hint">Linde de la finca: ${fmt(uvArea(f.linde), 2)} ha · ${f.linde.length} ${f.linde.length === 1 ? 'polígono' : 'polígonos'}. Se dibuja en el plano.</p>` : ''}
+    ${(f.uvs || []).length ? '<button class="btn danger" data-act="delUvs">Quitar las UV</button>' : ''}
     <div class="rows">
       ${(f.uvs || []).map(u => { const n = ps.filter(p => p.uv === u.id).length; return `<div class="r">
         <div class="grid3"><label class="fld"><span>Nº UV</span><input data-uvk="${esc(u.id)}.num" value="${esc(u.num)}"></label><label class="fld"><span>Nombre</span><input data-uvk="${esc(u.id)}.nombre" value="${esc(u.nombre)}"></label><label class="fld"><span>Superficie (ha)</span><input data-uvk="${esc(u.id)}.sup" data-num inputmode="decimal" value="${esc(fmt(u.sup, 2))}"></label></div>
@@ -1286,6 +1289,16 @@ const uvDe = (f, lat, lon) => lat == null ? null : (f.uvs || []).find(u => u.pol
 function asignarUv(f, p) { if (p.uvFija) return false; const u = uvDe(f, p.lat, p.lon); if ((p.uv || null) !== u) { p.uv = u; return true; } return false; }
 const uvOf = (f, p) => (f.uvs || []).find(u => u.id === p.uv) || null;
 const uvLabel = u => u ? `UV ${u.num} · ${u.nombre}` : 'Sin UV';
+// Linde de la finca: todos los polígonos del KML, solo para dibujarlo y saber la superficie.
+async function importLinde(file) {
+  const f = F(); let polys;
+  try {
+    const txt = /\.kmz$/i.test(file.name) ? await unzipKml(await file.arrayBuffer()) : await file.text();
+    polys = parseUvKml(txt).flatMap(u => u.polys);
+  } catch (e) { toast('No se pudo leer el archivo: ' + e.message, 5000); return; }
+  f.linde = polys; mark(f); save(); render(true);
+  toast(`Linde importado · ${fmt(uvArea(polys), 2)} ha`);
+}
 async function importUvs(file) {
   const f = F(); let uvs;
   try { uvs = parseUvKml(/\.kmz$/i.test(file.name) ? await unzipKml(await file.arrayBuffer()) : await file.text()); }
@@ -1794,6 +1807,7 @@ document.addEventListener('change', async e => {
   if (c === 'restore' && el.files[0]) restore(el.files[0]);
   if (c === 'importPts' && el.files[0]) importPts(el.files[0]);
   if (c === 'importUv' && el.files[0]) importUvs(el.files[0]);
+  if (c === 'importLinde' && el.files[0]) importLinde(el.files[0]);
   if (c === 'uvSel') {
     const q = f.parcelas.find(x => x.id === el.dataset.id);
     if (el.value === 'auto') { q.uvFija = false; asignarUv(f, q); } else { q.uvFija = true; q.uv = el.value === 'none' ? null : el.value; }

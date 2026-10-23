@@ -104,6 +104,7 @@ alter table public.parcelas add column if not exists lon_orig double precision;
 --   fincas.uvs: [{id, num, nombre, sup (ha), polys: [{outer: [[lon,lat]...], holes: [...]}]}]
 --   parcelas.uv: id de la UV donde cae el punto; uv_fija = la oficina la puso a mano.
 alter table public.fincas   add column if not exists uvs jsonb not null default '[]';
+alter table public.fincas   add column if not exists linde jsonb not null default '[]';  -- polígonos del linde
 alter table public.parcelas add column if not exists uv text;
 alter table public.parcelas add column if not exists uv_fija boolean not null default false;
 
