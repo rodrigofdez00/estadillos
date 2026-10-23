@@ -387,6 +387,7 @@ function load() {
   if (S.syncV !== DATOS_V) { S.sync.last = null; S.syncV = DATOS_V; }
 }
 const DATOS_V = 3;
+const APP_V = '1.6 · 23/10/2026';   // se muestra en la pantalla de inicio
 function saveNow() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('No se pudo guardar en la tablet: ' + e.message, 5000); } }
 let saveT; function save() { clearTimeout(saveT); saveT = setTimeout(saveNow, 250); syncSoon(); }
 // Marca un cambio que hay que subir al servidor.
@@ -717,6 +718,7 @@ function vHome() {
       <label class="btn ghost">Importar copia<input type="file" accept=".json,application/json" data-change="restore" hidden></label>
     </div>
   </section>
+  <p class="hint" style="text-align:center">Versión ${APP_V}</p>
 </main>`;
 }
 
@@ -802,6 +804,8 @@ const FONDOS = {
   sat: { nombre: 'Satélite', url: IGN('pnoa-ma', 'OI.OrthoimageCoverage', 'image/jpeg'), max: 20, attr: 'Ortofoto PNOA © IGN' },
   mapa: { nombre: 'Mapa', url: IGN('ign-base', 'IGNBaseTodo', 'image/jpeg'), max: 18, attr: 'Mapa base © IGN' }
 };
+// Si el IGN no responde (algunas redes móviles lo bloquean o va lento), se usa la imagen de Esri.
+const RESPALDO = { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', max: 19, attr: 'Imagen © Esri, Maxar, Earthstar' };
 const TONOS = ['#FFD54F', '#4FC3F7', '#FF8A65', '#BA68C8', '#81C784', '#F06292'];
 let MAPA = null;
 function drawMap() {
@@ -846,11 +850,20 @@ function drawMap() {
   }
   mapaYo();
 }
-function ponerFondo(k) {
-  const fd = FONDOS[k] || FONDOS.sat;
+function ponerFondo(k, respaldo) {
+  const fd = respaldo ? RESPALDO : (FONDOS[k] || FONDOS.sat);
   if (MAPA._fondo) MAPA.removeLayer(MAPA._fondo);
-  MAPA._fondo = L.tileLayer(fd.url, { maxNativeZoom: fd.max, maxZoom: 20, attribution: fd.attr, crossOrigin: true }).addTo(MAPA);
-  MAPA._fondo.bringToBack();
+  // Sin crossOrigin: es como mejor cargan las teselas en Safari del iPhone.
+  const capa = MAPA._fondo = L.tileLayer(fd.url, { maxNativeZoom: fd.max, maxZoom: 20, attribution: fd.attr }).addTo(MAPA);
+  capa.bringToBack();
+  if (!respaldo) {
+    let ok = 0, mal = 0;
+    // Si el IGN no llega a este dispositivo (errores o nada en 7 s), se cambia a Esri.
+    const cambiar = () => { if (!ok && MAPA && MAPA._fondo === capa && navigator.onLine) { ponerFondo(k, true); toast('La ortofoto del IGN no carga en esta conexión: se muestra la imagen de Esri', 4500); } };
+    capa.on('tileload', () => ok++);
+    capa.on('tileerror', () => { if (++mal >= 4) cambiar(); });
+    setTimeout(cambiar, 7000);
+  }
   $$('[data-act="fondo"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === k)));
 }
 function mapaYo() {
@@ -871,7 +884,7 @@ async function guardarMapa() {
     for (let x = tx(w, z); x <= tx(e, z); x++) for (let y = ty(n, z); y <= ty(s, z); y++) urls.push(FONDOS[k].url.replace('{z}', z).replace('{x}', x).replace('{y}', y));
   if (urls.length > 3000) { toast('La finca es demasiado grande para guardarla entera'); return; }
   let hechas = 0, fallos = 0; const b = $('[data-act="guardarMapa"]');
-  const uno = async u => { try { const r = await fetch(u, { mode: 'cors' }); if (!r.ok) fallos++; } catch (e) { fallos++; } hechas++; if (b) b.textContent = `Guardando mapa… ${Math.round(hechas / urls.length * 100)} %`; };
+  const uno = async u => { try { const r = await fetch(u, { mode: 'no-cors' }); if (!r.ok && r.type !== 'opaque') fallos++; } catch (e) { fallos++; } hechas++; if (b) b.textContent = `Guardando mapa… ${Math.round(hechas / urls.length * 100)} %`; };
   for (let i = 0; i < urls.length; i += 8) await Promise.all(urls.slice(i, i + 8).map(uno));
   if (b) b.textContent = 'Mapa guardado ✓';
   toast(fallos ? `Mapa guardado con ${fallos} teselas sin descargar: repítelo con mejor conexión` : `Mapa guardado para usarlo sin cobertura (${urls.length} teselas)`, 5000);
@@ -2025,7 +2038,16 @@ history.replaceState(V, '');
 render();
 startGPS();
 initCloud();
-if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => { });
+// La app se actualiza sola: al abrirla busca versión nueva y, si la hay, recarga una vez.
+if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+  const habia = !!navigator.serviceWorker.controller;
+  let recargada = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    const escribiendo = document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+    if (habia && !recargada && !escribiendo) { recargada = true; saveNow(); location.reload(); }
+  });
+  navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => { });
+}
 </script>
 </body>
 </html>

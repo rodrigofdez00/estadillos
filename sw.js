@@ -1,5 +1,5 @@
 // Guarda la app en la tablet para que funcione sin cobertura.
-const CACHE = 'estadillos-v4';
+const CACHE = 'estadillos-v5';
 const TESELAS = 'estadillos-teselas';   // mapa del IGN: se conserva entre versiones
 const LIBS = [
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
@@ -32,8 +32,9 @@ self.addEventListener('fetch', e => {
     return;
   }
   // Teselas del IGN: la guardada si la hay; si no, se descarga y se guarda.
-  if (url.hostname === 'www.ign.es' && url.pathname.startsWith('/wmts/')) {
-    e.respondWith(caches.open(TESELAS).then(c => c.match(req.url).then(hit => hit || fetch(req).then(res => { if (res.ok) c.put(req.url, res.clone()); return res; }))));
+  if ((url.hostname === 'www.ign.es' && url.pathname.startsWith('/wmts/')) || url.hostname === 'server.arcgisonline.com') {
+    // Las teselas llegan como respuesta opaca (sin CORS): también se guardan.
+    e.respondWith(caches.open(TESELAS).then(c => c.match(req.url).then(hit => hit || fetch(req).then(res => { if (res.ok || res.type === 'opaque') c.put(req.url, res.clone()); return res; }))));
     return;
   }
   // Archivos de la app: primero la red para recibir versiones nuevas; sin red, la copia guardada.
