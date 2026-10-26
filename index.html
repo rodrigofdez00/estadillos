@@ -387,7 +387,7 @@ function load() {
   if (S.syncV !== DATOS_V) { S.sync.last = null; S.syncV = DATOS_V; }
 }
 const DATOS_V = 3;
-const APP_V = '1.7 · 23/10/2026';   // se muestra en la pantalla de inicio
+const APP_V = '1.8 · 26/10/2026';   // se muestra en la pantalla de inicio
 function saveNow() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('No se pudo guardar en la tablet: ' + e.message, 5000); } }
 let saveT; function save() { clearTimeout(saveT); saveT = setTimeout(saveNow, 250); syncSoon(); }
 // Marca un cambio que hay que subir al servidor.
@@ -950,7 +950,7 @@ function vCfg() {
   </section>
   <section class="sec">
     <div class="sec-h"><h2>Puntos de inventario</h2></div>
-    <p class="hint">Los prepara la oficina. Admite el KMZ o KML exportado del SIG (el nombre de cada punto es el nº de parcela) o un CSV con columnas <b>parcela; lat; lon</b> o <b>parcela; x; y</b> en UTM del huso indicado arriba. Si una parcela ya existe, solo se actualizan sus coordenadas.</p>
+    <p class="hint">Los prepara la oficina. Admite el KMZ o KML exportado del SIG (el nombre de cada punto es el nº de parcela) o un CSV con columnas <b>parcela; lat; lon</b> o <b>parcela; x; y</b> en UTM del huso indicado arriba. Si una parcela ya existe, se actualizan sus coordenadas, salvo que ya tenga ficha o se haya movido en campo: esas conservan el punto donde se midió.</p>
     <label class="btn">Importar puntos<input type="file" accept=".kmz,.kml,.csv,.txt,.zip,.shp,.dbf,.prj,.cpg,.shx" multiple data-change="importPts" hidden></label>
     <div class="rows">
       ${ps.map(p => `<div class="r"><div class="r-h"><b>Parcela ${esc(p.num)}</b><button class="del" data-act="delP" data-id="${p.id}">Eliminar</button></div>
@@ -1400,16 +1400,24 @@ async function importPts(files) {
     });
   } catch (e) { toast('No se pudo leer el archivo: ' + e.message, 5000); return; }
   if (!pts.length) { toast('El archivo no tiene puntos'); return; }
-  let nuevas = 0, act = 0, movidas = 0;
-  pts.forEach((q, i) => {
+  let nuevas = 0, act = 0; const conservadas = [];
+  pts.forEach(q => {
     const n = q.num || String(f.parcelas.length + 1);
     const ex = vivas(f).find(p => String(p.num) === String(n));
-    // Un punto movido en campo conserva su posición nueva.
-    if (ex) { if (ex.latO == null) { ex.lat = q.lat; ex.lon = q.lon; } else movidas++; if (q.canton) ex.canton = q.canton; asignarUv(f, ex); mark(ex); act++; }
-    else { const np = newParcela(n, q.lat, q.lon, q.canton); asignarUv(f, np); mark(np); f.parcelas.push(np); nuevas++; }
+    if (!ex) { const np = newParcela(n, q.lat, q.lon, q.canton); asignarUv(f, np); mark(np); f.parcelas.push(np); nuevas++; return; }
+    // Una parcela movida en campo o con la ficha empezada conserva su posición:
+    // ahí es donde se midió. Para cambiarla, «Mover el punto aquí» desde su ficha.
+    const conDatos = ex.latO != null || ex.estado !== 'pendiente' || ex.f.pm.length > 0;
+    const distinta = ex.lat == null || dist(ex, q) > 1;
+    let cambia = false;
+    if (distinta) { if (conDatos) conservadas.push(ex.num); else { ex.lat = q.lat; ex.lon = q.lon; cambia = true; } }
+    if (q.canton && q.canton !== ex.canton) { ex.canton = q.canton; cambia = true; }
+    if (asignarUv(f, ex)) cambia = true;
+    if (cambia) { mark(ex); act++; }
   });
-  mark(f); saveNow(); syncSoon(); render(true);
-  toast(`${nuevas} parcelas nuevas, ${act} actualizadas${movidas ? ` (${movidas} movidas en campo conservan su posición)` : ''}`, 4000);
+  if (nuevas || act) mark(f);
+  saveNow(); syncSoon(); render(true);
+  toast(`${nuevas} parcelas nuevas, ${act} actualizadas` + (conservadas.length ? `. No se han movido las parcelas ${conservadas.join(', ')} porque ya tienen ficha o se movieron en campo` : ''), conservadas.length ? 7000 : 4000);
 }
 
 /* ============ Unidades de vegetación (UV) ============
