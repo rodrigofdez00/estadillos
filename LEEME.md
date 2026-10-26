@@ -62,6 +62,7 @@ La app se usa en vertical y en horizontal. En tablet, la ficha se reparte en dos
    - Cada parcela se asigna a la UV en la que cae su punto, y se recalcula si se mueve en campo.
    - El nº, el nombre y la superficie de cada UV se pueden corregir. También se puede fijar a mano la UV de una parcela.
    **Proponer las parcelas (opcional).** Carga también los **caminos** en Ajustes (`Importar caminos`, shape de líneas). En la finca, la sección **Proponer parcelas de inventario** calcula los puntos con estas reglas, que se pueden cambiar:
+   - Solo en las UV **arboladas**. La app lo deduce del nombre (matorral, pastizal, cultivo, olivar, infraestructuras… no se inventarían) y se cambia con la casilla **Arbolada** de cada UV en Ajustes.
    - Número de parcelas: 1 por cada 10 ha de cada UV, redondeando hacia arriba, con un mínimo por UV. Se reparten entre los rodales según su superficie y separadas entre sí.
    - Accesibles: a 100 m como máximo de un camino y a 25 m como mínimo, para que el camino no cruce la parcela.
    - El círculo de la parcela queda entero dentro de la UV, con una pendiente de como máximo el 50 % en todo él. La pendiente se calcula con el MDT de 5 m del IGN.
@@ -69,7 +70,7 @@ La app se usa en vertical y en horizontal. En tablet, la ficha se reparte en dos
 
    Las propuestas salen en morado en el mapa, con su círculo. Cada una muestra su cobertura, su pendiente, la distancia al camino y los avisos. Se pueden **aceptar** (pasan a ser parcelas y las ve el campo), **arrastrar** en el mapa (se recalculan sus datos) o **descartar**. El botón **Ver pendiente** pinta en amarillo las zonas del 30 al 50 % y en rojo las de más del 50 %.
 
-2. **Campo:** abre la finca. El mapa muestra la ortofoto PNOA del IGN (o el mapa base) con las UV, los rodales, el linde, las parcelas y tu posición.
+2. **Campo:** abre la finca. El mapa muestra la ortofoto PNOA del IGN (o el mapa base) con las UV, los rodales, el linde, las parcelas y tu posición. El botón ⛶ de la esquina lo pone en pantalla completa (y lo quita); ◎ centra el mapa en tu posición.
    - Antes de salir al campo, con conexión, pulsa **Guardar mapa sin cobertura**: descarga la ortofoto de la finca a la tablet. Para Domingo son unas 960 teselas, menos de medio minuto.
    - Toca una parcela en el mapa o en la lista y sigue la flecha hasta el punto.
    - Si el punto cae en un sitio no representativo (camino, roquedo, charca…), ponte donde vas a medir y pulsa **Datos → Mover el punto aquí**. La posición de la oficina se guarda y se puede recuperar con **Volver al original**.

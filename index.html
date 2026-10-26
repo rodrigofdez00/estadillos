@@ -200,6 +200,12 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 
 /* Mapa de satélite */
 .map { width: 100%; height: 360px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--idle-soft); z-index: 0; }
+/* !important: Leaflet pone position: relative en línea y la vista de tablet fija otra altura */
+.map.map-full { position: fixed !important; inset: 0; width: 100vw !important; height: 100vh !important; height: 100dvh !important; border: 0; border-radius: 0; z-index: 5000; }
+body.con-mapa-full { overflow: hidden; }
+body.con-mapa-full .col-mapa { z-index: 5000; }   /* la columna fija (sticky) crea su propio apilamiento */
+.map-ctl a { width: 44px; height: 44px; line-height: 44px; font-size: 22px; text-align: center; }
+.map-full .map-ctl a[data-act="mapaFull"] { background: var(--ink, #222); color: #fff; }
 .map-bar { gap: 8px; }
 .map-bar .btn { min-height: 44px; padding: 8px 12px; font-size: 14px; }
 .pm-ico { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; border: 2.5px solid #fff; color: #fff; font: 800 15px var(--font); box-shadow: 0 1px 4px rgb(0 0 0 / .5); cursor: pointer; }
@@ -389,7 +395,7 @@ function load() {
   if (S.syncV !== DATOS_V) { S.sync.last = null; S.syncV = DATOS_V; }
 }
 const DATOS_V = 3;
-const APP_V = '1.10 · 26/10/2026';   // se muestra en la pantalla de inicio
+const APP_V = '1.11 · 26/10/2026';   // se muestra en la pantalla de inicio
 function saveNow() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('No se pudo guardar en la tablet: ' + e.message, 5000); } }
 let saveT; function save() { clearTimeout(saveT); saveT = setTimeout(saveNow, 250); syncSoon(); }
 // Marca un cambio que hay que subir al servidor.
@@ -815,9 +821,16 @@ const FONDOS = {
 // Si el IGN no responde (algunas redes móviles lo bloquean o va lento), se usa la imagen de Esri.
 const RESPALDO = { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', max: 19, attr: 'Imagen © Esri, Maxar, Earthstar' };
 const TONOS = ['#FFD54F', '#4FC3F7', '#FF8A65', '#BA68C8', '#81C784', '#F06292'];
-let MAPA = null, VER_PEND = false;
+let MAPA = null, VER_PEND = false, MAPA_FULL = false;
+function mapaFull(on) {
+  MAPA_FULL = on; const el = $('#map');
+  document.body.classList.toggle('con-mapa-full', on);
+  if (!el || !MAPA) return;
+  el.classList.toggle('map-full', on);
+  const c = MAPA.getCenter(); requestAnimationFrame(() => { MAPA.invalidateSize(); MAPA.panTo(c, { animate: false }); });
+}
 function drawMap() {
-  const el = $('#map'); if (!el) { if (MAPA) { MAPA.remove(); MAPA = null; } return; }
+  const el = $('#map'); if (!el) { if (MAPA) { MAPA.remove(); MAPA = null; } MAPA_FULL = false; document.body.classList.remove('con-mapa-full'); return; }
   const f = F();
   if (MAPA && MAPA.getContainer() !== el) { MAPA.remove(); MAPA = null; }
   if (!MAPA) {
@@ -827,7 +840,16 @@ function drawMap() {
     ponerFondo(S.fondo || 'sat');
     MAPA._datos.addTo(MAPA); MAPA._yo.addTo(MAPA);
     MAPA._ajustado = false;
+    // Pantalla completa con CSS (Safari del iPhone no deja usar la de pantalla completa del navegador en un mapa)
+    const Ctl = L.Control.extend({ onAdd() {
+      const d = L.DomUtil.create('div', 'leaflet-bar map-ctl');
+      d.innerHTML = '<a href="#" role="button" data-act="mapaFull" title="Pantalla completa" aria-label="Pantalla completa">⛶</a><a href="#" role="button" data-act="centrar" title="Centrar en mí" aria-label="Centrar en mí">◎</a>';
+      L.DomEvent.disableClickPropagation(d); d.addEventListener('click', e => e.preventDefault());
+      return d;
+    } });
+    new Ctl({ position: 'topright' }).addTo(MAPA);
   }
+  el.classList.toggle('map-full', MAPA_FULL); el.parentElement.classList.add('col-mapa'); document.body.classList.toggle('con-mapa-full', MAPA_FULL);
   const g = MAPA._datos; g.clearLayers();
   const ll = r => r.map(([lon, lat]) => [lat, lon]);
   const forma = pg => [ll(pg.outer), ...pg.holes.map(ll)];
@@ -999,6 +1021,7 @@ function vCfg() {
     <div class="rows">
       ${(f.uvs || []).map(u => { const n = ps.filter(p => p.uv === u.id).length; return `<div class="r">
         <div class="grid3"><label class="fld"><span>Nº UV</span><input data-uvk="${esc(u.id)}.num" value="${esc(u.num)}"></label><label class="fld"><span>Nombre</span><input data-uvk="${esc(u.id)}.nombre" value="${esc(u.nombre)}"></label><label class="fld"><span>Superficie (ha)</span><input data-uvk="${esc(u.id)}.sup" data-num inputmode="decimal" value="${esc(fmt(u.sup, 2))}"></label></div>
+        ${u.num !== '—' ? `<label class="hint" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" style="width:22px;height:22px" data-uva="${esc(u.id)}" ${esArbolada(u) ? 'checked' : ''}> <span><b>Arbolada</b>: se inventaría y se le proponen parcelas</span></label>` : ''}
         <div class="hint">${n} ${n === 1 ? 'parcela' : 'parcelas'} · ${u.polys.length} ${u.polys.length === 1 ? 'polígono' : 'polígonos'}${(u.rodales || []).length ? ' · rodales ' + u.rodales.map(r => `<b>${esc(r.nombre)}</b> ${fmt(r.sup, 2)} ha`).join(', ') : ''}</div></div>`; }).join('')}
       ${(f.uvs || []).length && ps.some(p => !p.uv) ? `<p class="hint">Sin UV: parcelas ${ps.filter(p => !p.uv).map(p => esc(p.num)).join(', ')}</p>` : ''}
     </div>
@@ -1533,7 +1556,12 @@ function asignarUv(f, p) {
   return antes !== (p.uv || null) + '|' + (p.rodal || null);
 }
 const uvOf = (f, p) => (f.uvs || []).find(u => u.id === p.uv) || null;
-const uvLabel = u => !u ? 'Sin UV' : u.num && u.num !== '—' ? `UV ${u.num} · ${u.nombre}` : u.nombre;
+// Solo se inventarían las UV arboladas. Se deduce del nombre y se puede cambiar en Ajustes.
+const ARBOLADO = /arbol|encin|alcornoc|quejig|roble|rebollo|pino|pinar|eucalipt|dehesa|bosque|castañ|acebuch|fresn|chop|álamo|ripari|sotobosque|frondos|conífer/i;
+const NO_ARBOLADO = /matorral|pastizal|pasto|herbazal|prado|cultivo|labor|olivar|viñ|infraestructura|improductiv|agua|embalse|charca|roquedo|erial|urban|edific|camino|cortafuego/i;
+const arboladaAuto = u => ARBOLADO.test(u.nombre || '') || !NO_ARBOLADO.test(u.nombre || '');
+const esArbolada = u => u.num !== '—' && (u.arbolada ?? arboladaAuto(u));
+const uvLabel = u =>!u ? 'Sin UV' : u.num && u.num !== '—' ? `UV ${u.num} · ${u.nombre}` : u.nombre;
 // Linde de la finca: solo para dibujarlo y saber la superficie.
 async function importLinde(files) {
   const f = F(); let polys;
@@ -1548,7 +1576,7 @@ async function importUvs(files) {
   catch (e) { toast('No se pudo leer el archivo: ' + e.message, 5000); return; }
   // Conserva los nombres que la oficina ya hubiera corregido.
   const prev = new Map((f.uvs || []).map(u => [u.id, u]));
-  uvs.forEach(u => { const o = prev.get(u.id); if (o && o.editado) { u.nombre = o.nombre; u.num = o.num; u.editado = true; } });
+  uvs.forEach(u => { const o = prev.get(u.id); if (o && o.editado) { u.nombre = o.nombre; u.num = o.num; u.editado = true; } if (o && o.arbolada != null) u.arbolada = o.arbolada; });
   f.uvs = uvs; mark(f);
   let dentro = 0;
   vivas(f).forEach(p => { if (asignarUv(f, p)) mark(p); if (p.uv) dentro++; });
@@ -1628,7 +1656,7 @@ async function analizarTerreno(f, avisar) {
     }
   };
   const rodales = (f.uvs || []).flatMap((u, ui) => (u.rodales || []).map(r => ({ ...r, ui })));
-  (f.uvs || []).forEach((u, ui) => { if (u.num !== '—') rellenar(u.polys, c => { uvI[c] = ui; }); });
+  (f.uvs || []).forEach((u, ui) => { if (esArbolada(u)) rellenar(u.polys, c => { uvI[c] = ui; }); });
   rodales.forEach((r, ri) => rellenar(r.polys, c => { if (uvI[c] === r.ui) rodI[c] = ri; }));
   if ((f.linde || []).length) rellenar(f.linde, c => { enLinde[c] = 1; }); else enLinde.fill(1);
   // Distancias (m) con una transformada de distancia sobre la rejilla (dos pasadas)
@@ -1761,7 +1789,7 @@ async function proponerParcelas() {
   // Selección por UV, repartida por rodales según superficie y con separación mínima
   const props = [], faltan = [];
   f.uvs.forEach((u, ui) => {
-    if (u.num === '—') return;
+    if (!esArbolada(u)) return;
     const n = Math.max(cfg.minPorUv, Math.ceil(u.sup / cfg.haPorParcela));
     const sep = Math.max(2.5 * A.R, 0.6 * Math.sqrt(u.sup * 10000 / n));
     const cu = cand.filter(m => m.uv === ui).sort((a, b) => a.nota - b.nota);
@@ -1815,6 +1843,7 @@ function vPropuestas(f) {
   <section class="sec card">
     <div class="sec-h"><h2>Proponer parcelas de inventario</h2></div>
     <p class="hint">La app busca puntos accesibles (a menos de ${cfg.dMax} m de un camino), con la pendiente de toda la parcela por debajo del ${cfg.pMax} %, y que representen cada UV: cobertura de copas parecida a la típica de la UV, para que las parcelas tengan un número de pies parecido, y entorno homogéneo. Usa el MDT de 5 m y la ortofoto PNOA del IGN.${(f.caminos || []).length ? '' : ' <b>Carga antes los caminos en Ajustes.</b>'}</p>
+    ${(f.uvs || []).some(u => u.num !== '—') ? `<p class="hint">Solo se inventarían las UV arboladas: <b>${esc(f.uvs.filter(esArbolada).map(uvLabel).join(', ') || 'ninguna')}</b>.${f.uvs.some(u => u.num !== '—' && !esArbolada(u)) ? ' Sin parcelas: ' + esc(f.uvs.filter(u => u.num !== '—' && !esArbolada(u)).map(uvLabel).join(', ')) + '.' : ''} Se cambia en Ajustes.</p>` : ''}
     <div class="grid3">
       <label class="fld"><span>Ha por parcela</span><input data-pc="haPorParcela" data-num inputmode="decimal" value="${cfg.haPorParcela}"></label>
       <label class="fld"><span>Mínimo por UV</span><input data-pc="minPorUv" data-num inputmode="numeric" value="${cfg.minPorUv}"></label>
@@ -2307,6 +2336,7 @@ document.addEventListener('click', e => {
     case 'propNinguna': if (confirm('¿Descartar todas las propuestas?')) { sorted(f, true).filter(p => p.estado === 'propuesta').forEach(q => { q.borrada = true; mark(q); }); save(); render(true); } break;
     case 'verPend': VER_PEND = !VER_PEND; render(true); break;
     case 'fondo': S.fondo = el.dataset.v; save(); if (MAPA) ponerFondo(S.fondo); break;
+    case 'mapaFull': mapaFull(!MAPA_FULL); break;
     case 'centrar': if (!G) toast(gErr || 'Aún no hay señal GPS'); else if (MAPA) MAPA.setView([G.lat, G.lon], Math.max(MAPA.getZoom(), 17)); break;
     case 'guardarMapa': if (!navigator.onLine) toast('Hace falta conexión para guardar el mapa'); else guardarMapa(); break;
     case 'delUvs': if (confirm('¿Quitar las unidades de vegetación de esta finca? Las parcelas quedarán sin UV.')) { f.uvs = []; mark(f); vivas(f).forEach(q => { q.uv = null; q.uvFija = false; mark(q); }); save(); render(true); } break;
@@ -2348,6 +2378,7 @@ document.addEventListener('input', e => {
   if (el.dataset.fk) { const f = F(); f[el.dataset.fk] = el.hasAttribute('data-num') ? (num(el.value) ?? f[el.dataset.fk]) : el.value; mark(f); save(); return; }
   if (el.dataset.pk) { const [id, k] = el.dataset.pk.split('.'); const q = F().parcelas.find(x => x.id === id); q[k] = el.value; mark(q); save(); return; }
   if (el.dataset.pc) { const f = F(); f.propCfg = { ...PROP_DEF, ...(f.propCfg || {}), [el.dataset.pc]: num(el.value) ?? PROP_DEF[el.dataset.pc] }; save(); return; }
+  if (el.dataset.uva) { const f = F(), u = f.uvs.find(x => x.id === el.dataset.uva); u.arbolada = el.checked; mark(f); save(); return; }
   if (el.dataset.uvk) { const f = F(); const [id, k] = el.dataset.uvk.split('.'); const u = f.uvs.find(x => x.id === id); u[k] = el.hasAttribute('data-num') ? num(el.value) : el.value; u.editado = true; mark(f); save(); return; }
   if (el.id === 'lgEmail' || el.id === 'lgPass') return;
   if (el.dataset.k) { const p = P(); setPath(p, el.dataset.k, el.hasAttribute('data-num') ? num(el.value) : el.value); touch(p); }
