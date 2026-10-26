@@ -204,6 +204,8 @@ h1, h2, h3 { margin: 0; text-wrap: balance; }
 .map-bar .btn { min-height: 44px; padding: 8px 12px; font-size: 14px; }
 .pm-ico { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; border: 2.5px solid #fff; color: #fff; font: 800 15px var(--font); box-shadow: 0 1px 4px rgb(0 0 0 / .5); cursor: pointer; }
 .pm-ico.st-pendiente { background: #6B7570; } .pm-ico.st-curso { background: #C77700; } .pm-ico.st-hecha { background: #2E7D32; }
+.pm-ico.st-propuesta { background: #7B1FA2; font-size: 12px; cursor: grab; }
+.tag.st-propuesta { background: #F3E5F5; color: #6A1B9A; }
 .leaflet-tooltip.rodal-lbl { background: rgb(0 0 0 / .45); border: 0; box-shadow: none; color: #fff; font: 700 12px var(--font); padding: 1px 6px; }
 .leaflet-tooltip.rodal-lbl::before { display: none; }
 .leaflet-container { font: 13px var(--font); }
@@ -351,7 +353,7 @@ const GANADO = ['Vacuno', 'Ovino', 'Caprino', 'Porcino', 'Equino', 'Cinegética'
 const DANO = ['Pisoteo', 'Ramoneo', 'Descortezado', 'Hozado', 'Otro'];
 const FOTO_T = ['Parcela', 'Croquis', 'Daño', 'Regenerado', 'Otra'];
 const QUAD = ['N', 'E', 'S', 'O'];
-const ESTADO_TXT = { pendiente: 'Pendiente', curso: 'En curso', hecha: 'Hecha' };
+const ESTADO_TXT = { pendiente: 'Pendiente', curso: 'En curso', hecha: 'Hecha', propuesta: 'Propuesta' };
 
 /* ============ Datos ============ */
 const KEY = 'estadillos.v1';
@@ -387,7 +389,7 @@ function load() {
   if (S.syncV !== DATOS_V) { S.sync.last = null; S.syncV = DATOS_V; }
 }
 const DATOS_V = 3;
-const APP_V = '1.8 · 26/10/2026';   // se muestra en la pantalla de inicio
+const APP_V = '1.9 · 26/10/2026';   // se muestra en la pantalla de inicio
 function saveNow() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('No se pudo guardar en la tablet: ' + e.message, 5000); } }
 let saveT; function save() { clearTimeout(saveT); saveT = setTimeout(saveNow, 250); syncSoon(); }
 // Marca un cambio que hay que subir al servidor.
@@ -444,11 +446,11 @@ async function logout() {
   S.me = null; saveNow(); go({ v: 'home' });
 }
 
-const fToRow = f => ({ id: f.id, nombre: f.nombre, tm: f.tm || '', radio: f.radio, radio_reg: f.radioReg, huso: f.huso, equipo: f.equipo || '', especies: f.sp, uvs: f.uvs || [], linde: f.linde || [], borrada: !!f.borrada, updated_at: f.upd || 0 });
+const fToRow = f => ({ id: f.id, nombre: f.nombre, tm: f.tm || '', radio: f.radio, radio_reg: f.radioReg, huso: f.huso, equipo: f.equipo || '', especies: f.sp, uvs: f.uvs || [], linde: f.linde || [], caminos: f.caminos || [], borrada: !!f.borrada, updated_at: f.upd || 0 });
 const pToRow = (f, p) => ({ id: p.id, finca_id: f.id, num: String(p.num), canton: p.canton || '', lat: p.lat, lon: p.lon, lat_orig: p.latO ?? null, lon_orig: p.lonO ?? null, uv: p.uv ?? null, uv_fija: !!p.uvFija, rodal: p.rodal ?? null, estado: p.estado, ficha: p.f, borrada: !!p.borrada, updated_at: p.upd || 0 });
 function mergeF(r) {
   let f = S.fincas.find(x => x.id === r.id);
-  const val = { nombre: r.nombre, tm: r.tm, radio: +r.radio, radioReg: +r.radio_reg, huso: r.huso, equipo: r.equipo, sp: r.especies?.length ? r.especies : SP_ARB.map(x => x.slice()), uvs: r.uvs || [], linde: r.linde || [], borrada: r.borrada, upd: +r.updated_at };
+  const val = { nombre: r.nombre, tm: r.tm, radio: +r.radio, radioReg: +r.radio_reg, huso: r.huso, equipo: r.equipo, sp: r.especies?.length ? r.especies : SP_ARB.map(x => x.slice()), uvs: r.uvs || [], linde: r.linde || [], caminos: r.caminos || [], borrada: r.borrada, upd: +r.updated_at };
   if (!f) { if (r.borrada) return false; S.fincas.push({ id: r.id, parcelas: [], ...val, dirty: false }); return true; }
   if (f.dirty && (f.upd || 0) > +r.updated_at) return false; // lo local es más nuevo: se subirá
   Object.assign(f, val, { dirty: false }); return true;
@@ -619,7 +621,9 @@ let V = { v: 'home' };
 let E = { d1: '', d2: '', edit: null }; // entrada en curso de pies mayores
 const F = () => S.fincas.find(f => f.id === V.f);
 const P = () => { const f = F(); return f && f.parcelas.find(p => p.id === V.p); };
-const sorted = f => vivas(f).sort((a, b) => (parseFloat(a.num) || 0) - (parseFloat(b.num) || 0) || String(a.num).localeCompare(b.num));
+// Parcelas reales (sin las propuestas que la oficina aún no ha aceptado).
+const reales = f => vivas(f).filter(p => p.estado !== 'propuesta');
+const sorted = (f, conPropuestas) => (conPropuestas ? vivas(f) : reales(f)).sort((a, b) => (parseFloat(a.num) || 0) - (parseFloat(b.num) || 0) || String(a.num).localeCompare(b.num));
 function go(nv, push = true) { V = nv; E = { d1: '', d2: '', edit: null }; if (push) history.pushState(V, ''); render(); scrollTo(0, 0); if (V.v === 'ficha') wake(); }
 addEventListener('popstate', e => { V = e.state || { v: 'home' }; E = { d1: '', d2: '', edit: null }; render(); scrollTo(0, 0); });
 const app = $('#app');
@@ -701,7 +705,7 @@ function vHome() {
   <section class="sec">
     <div class="sec-h"><h2>Fincas</h2></div>
     <div class="list">
-      ${fincasVivas().map(f => { const ps = vivas(f), t = ps.length, d = ps.filter(p => p.estado === 'hecha').length, c = ps.filter(p => p.estado === 'curso').length; return `
+      ${fincasVivas().map(f => { const ps = reales(f), t = ps.length, d = ps.filter(p => p.estado === 'hecha').length, c = ps.filter(p => p.estado === 'curso').length; return `
       <button class="item" data-act="openF" data-id="${f.id}">
         <div class="grow"><b>${esc(f.nombre)}</b><div class="meta">${esc(f.tm || 'Sin término municipal')} · ${t} parcelas${c ? ` · ${c} en curso` : ''}</div>
         <div class="prog"><i style="width:${t ? d / t * 100 : 0}%"></i></div></div>
@@ -739,6 +743,7 @@ function vFinca() {
   <div class="row map-bar">
     <div class="seg">${Object.entries(FONDOS).map(([k, v]) => `<button type="button" data-act="fondo" data-v="${k}" aria-pressed="${(S.fondo || 'sat') === k}">${v.nombre}</button>`).join('')}</div>
     <button type="button" class="btn ghost" data-act="centrar">Centrar en mí</button>
+    ${isOf() && ANALISIS[f.id] ? `<button type="button" class="btn ghost" data-act="verPend" aria-pressed="${!!(VER_PEND)}">${VER_PEND ? 'Ocultar pendiente' : 'Ver pendiente'}</button>` : ''}
     <button type="button" class="btn ghost" data-act="guardarMapa">Guardar mapa sin cobertura</button>
   </div>` : `<svg class="radar" id="radar" viewBox="0 0 360 240" role="img" aria-label="Plano de las parcelas"></svg>`) : ''}
   </div><div class="col">
@@ -749,6 +754,7 @@ function vFinca() {
   </section>`).join('') : `<p class="empty">${isOf() ? 'Esta finca no tiene parcelas. Impórtalas desde Ajustes (KMZ, KML o CSV).' : 'La oficina aún no ha cargado los puntos de esta finca.'}</p>`}
   </div></div>
   ${isOf() && ps.length ? vResumen(f, ps) : ''}
+  ${isOf() && (f.uvs || []).length ? vPropuestas(f) : ''}
   <section class="sec">
     <div class="sec-h"><h2>Excel de análisis</h2><span class="note">Uno por UV, como el modelo de la oficina</span></div>
     <div class="row">
@@ -809,7 +815,7 @@ const FONDOS = {
 // Si el IGN no responde (algunas redes móviles lo bloquean o va lento), se usa la imagen de Esri.
 const RESPALDO = { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', max: 19, attr: 'Imagen © Esri, Maxar, Earthstar' };
 const TONOS = ['#FFD54F', '#4FC3F7', '#FF8A65', '#BA68C8', '#81C784', '#F06292'];
-let MAPA = null;
+let MAPA = null, VER_PEND = false;
 function drawMap() {
   const el = $('#map'); if (!el) { if (MAPA) { MAPA.remove(); MAPA = null; } return; }
   const f = F();
@@ -839,15 +845,31 @@ function drawMap() {
     });
   });
   if ((f.linde || []).length) L.polygon(f.linde.map(forma), { color: '#ffffff', weight: 3, fill: false, interactive: false, dashArray: '10 5' }).addTo(g);
-  const ps = vivas(f).filter(p => p.lat != null);
+  (f.caminos || []).forEach(l => L.polyline(ll(l), { color: '#FFB300', weight: 3, opacity: .9, interactive: false }).addTo(g));
+  // Pendiente (solo en la oficina, tras analizar): amarillo 30-50 %, rojo > 50 %
+  const A = ANALISIS[f.id];
+  if (A && VER_PEND) {
+    const cv = document.createElement('canvas'); cv.width = A.nx; cv.height = A.ny; const cx2 = cv.getContext('2d'), im = cx2.createImageData(A.nx, A.ny);
+    for (let c = 0; c < A.pend.length; c++) { const v = A.pend[c], o = c * 4; if (v >= 30) { im.data[o] = 255; im.data[o + 1] = v > 50 ? 30 : 200; im.data[o + 2] = 0; im.data[o + 3] = 120; } }
+    cx2.putImageData(im, 0, 0);
+    const sw = fromUTM(A.x0, A.y0, A.Z), ne = fromUTM(A.x0 + A.nx * A.dx, A.y0 + A.ny * A.dy, A.Z);
+    L.imageOverlay(cv.toDataURL(), [[sw.lat, sw.lon], [ne.lat, ne.lon]], { opacity: .8, interactive: false }).addTo(g);
+  }
+  const ps = vivas(f).filter(p => p.lat != null && (p.estado !== 'propuesta' || isOf()));
+  ps.filter(p => p.estado === 'propuesta').forEach(p => L.circle([p.lat, p.lon], { radius: f.radio || 20, color: '#CE93D8', weight: 2, dashArray: '4 3', fill: false, interactive: false }).addTo(g));
   ps.filter(p => p.latO != null).forEach(p => {
     L.polyline([[p.latO, p.lonO], [p.lat, p.lon]], { color: '#FF9800', weight: 2, dashArray: '4 3', interactive: false }).addTo(g);
     L.circleMarker([p.latO, p.lonO], { radius: 6, color: '#FF9800', weight: 2, fill: true, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(g);
   });
-  ps.forEach(p => L.marker([p.lat, p.lon], { icon: L.divIcon({ className: '', html: `<span class="pm-ico st-${p.estado}" data-act="openP" data-id="${p.id}">${esc(p.num)}</span>`, iconSize: [34, 34], iconAnchor: [17, 17] }), keyboard: false }).addTo(g));
+  ps.forEach(p => {
+    const prop = p.estado === 'propuesta';
+    const mk = L.marker([p.lat, p.lon], { draggable: prop, keyboard: false, icon: L.divIcon({ className: '', html: `<span class="pm-ico st-${p.estado}" ${prop ? '' : `data-act="openP" data-id="${p.id}"`}>${esc(p.num)}</span>`, iconSize: [34, 34], iconAnchor: [17, 17] }) }).addTo(g);
+    // Una propuesta se arrastra para corregirla; sus datos se recalculan al soltarla.
+    if (prop) mk.on('dragend', () => { const q = mk.getLatLng(); p.lat = +q.lat.toFixed(7); p.lon = +q.lng.toFixed(7); asignarUv(f, p); recalcularPropuesta(f, p); mark(p); save(); render(true); });
+  });
   if (!MAPA._ajustado) {
     // Encuadra la finca cuando la caja ya tiene su tamaño definitivo.
-    const b = L.featureGroup(g.getLayers().filter(l => l.getBounds || l.getLatLng)).getBounds();
+    const b = L.featureGroup(g.getLayers().filter(l => !(l instanceof L.Circle) && !(l instanceof L.ImageOverlay) && (l.getBounds || l.getLatLng))).getBounds();
     if (b.isValid()) { MAPA.fitBounds(b, { padding: [16, 16], maxZoom: 18 }); MAPA._ajustado = true; const m = MAPA; requestAnimationFrame(() => { m.invalidateSize(); m.fitBounds(b, { padding: [16, 16], maxZoom: 18 }); }); }
   }
   mapaYo();
@@ -893,7 +915,7 @@ async function guardarMapa() {
 }
 function drawRadar() {
   const svg = $('#radar'); if (!svg) return;
-  const f = F(); const ps = vivas(f).filter(p => p.lat != null);
+  const f = F(); const ps = reales(f).filter(p => p.lat != null);
   if (!ps.length) { svg.remove(); return; }
   const pts = ps.map(p => ({ lat: p.lat, lon: p.lon }));
   ps.forEach(p => { if (p.latO != null) pts.push({ lat: p.latO, lon: p.lonO }); });
@@ -970,6 +992,8 @@ function vCfg() {
       <label class="btn">Importar UV y rodales<input type="file" accept=".kmz,.kml,.zip,.shp,.dbf,.prj,.cpg,.shx" multiple data-change="importUv" hidden></label>
       <label class="btn ghost">${(f.linde || []).length ? 'Cambiar linde' : 'Importar linde'}<input type="file" accept=".kmz,.kml,.zip,.shp,.dbf,.prj,.cpg,.shx" multiple data-change="importLinde" hidden></label>
     </div>
+    <label class="btn ghost">${(f.caminos || []).length ? 'Cambiar caminos' : 'Importar caminos'}<input type="file" accept=".kmz,.kml,.zip,.shp,.dbf,.prj,.cpg,.shx" multiple data-change="importCaminos" hidden></label>
+    ${(f.caminos || []).length ? `<p class="hint">Caminos: ${f.caminos.length} tramos. Se dibujan en el mapa y sirven para proponer parcelas accesibles.</p>` : ''}
     ${(f.linde || []).length ? `<p class="hint">Linde de la finca: ${fmt(uvArea(f.linde), 2)} ha · ${f.linde.length} ${f.linde.length === 1 ? 'polígono' : 'polígonos'}. Se dibuja en el plano.</p>` : ''}
     ${(f.uvs || []).length ? '<button class="btn danger" data-act="delUvs">Quitar las UV</button>' : ''}
     <div class="rows">
@@ -1309,7 +1333,8 @@ function kmlFeats(txt) {
       holes: [...pg.getElementsByTagName('innerBoundaryIs')].map(ringOf).filter(r => r.length > 2)
     })).filter(p => p.outer.length > 2);
     const pt = ringOf(pm.getElementsByTagName('Point')[0])[0] || null;
-    return { name: pm.getElementsByTagName('name')[0]?.textContent.trim() || '', attrs: kmlAttrs(pm), polys, pt };
+    const lines = [...pm.getElementsByTagName('LineString')].map(ringOf).filter(l => l.length > 1);
+    return { name: pm.getElementsByTagName('name')[0]?.textContent.trim() || '', attrs: kmlAttrs(pm), polys, pt, lines };
   }).filter(Boolean);
 }
 function leerShp(shp, dbf, prj, cpg, husoDef) {
@@ -1342,6 +1367,16 @@ function leerShp(shp, dbf, prj, cpg, husoDef) {
   for (let o = 100, i = 0; o + 12 <= shp.byteLength; i++) {
     const len = dv.getInt32(o + 4) * 2, c = o + 8, tipo = dv.getInt32(c, true), a = attrs[i] || {};
     if ([1, 11, 21].includes(tipo)) feats.push({ name: '', attrs: a, polys: [], pt: tr(dv.getFloat64(c + 4, true), dv.getFloat64(c + 12, true)) });
+    else if ([3, 13, 23].includes(tipo)) {
+      // Líneas (caminos): cada parte es una polilínea.
+      const np = dv.getInt32(c + 36, true), nPts = dv.getInt32(c + 40, true), p0 = c + 44 + 4 * np, lines = [];
+      for (let k = 0; k < np; k++) {
+        const a0 = dv.getInt32(c + 44 + 4 * k, true), a1 = k + 1 < np ? dv.getInt32(c + 48 + 4 * k, true) : nPts, l = [];
+        for (let j = a0; j < a1; j++) l.push(tr(dv.getFloat64(p0 + 16 * j, true), dv.getFloat64(p0 + 16 * j + 8, true)));
+        if (l.length > 1) lines.push(l);
+      }
+      feats.push({ name: '', attrs: a, polys: [], pt: null, lines });
+    }
     else if ([5, 15, 25].includes(tipo)) {
       const np = dv.getInt32(c + 36, true), nPts = dv.getInt32(c + 40, true), p0 = c + 44 + 4 * np, polys = [];
       // Anillos exteriores en sentido horario; los huecos, al revés.
@@ -1521,6 +1556,247 @@ async function importUvs(files) {
   const fuera = vivas(f).length - dentro;
   const nRod = uvs.reduce((a, u) => a + u.rodales.length, 0);
   toast(`${uvs.length} UV${nRod ? ` y ${nRod} rodales` : ''} importados · ${dentro} parcelas asignadas${fuera ? ` · ${fuera} fuera de todas las UV` : ''}`, 5000);
+}
+
+// Caminos: líneas para el mapa y para que las parcelas propuestas sean accesibles.
+async function importCaminos(files) {
+  const f = F(); let lines;
+  try { lines = (await leerCapa(files, f.huso)).flatMap(x => x.lines || []); if (!lines.length) throw new Error('El archivo no tiene líneas'); }
+  catch (e) { toast('No se pudo leer el archivo: ' + e.message, 5000); return; }
+  f.caminos = lines.map(l => l.map(([lo, la]) => [+lo.toFixed(6), +la.toFixed(6)]));
+  mark(f); save(); render(true);
+  const km = f.caminos.reduce((a, l) => a + l.slice(1).reduce((s, p, i) => s + dist({ lat: l[i][1], lon: l[i][0] }, { lat: p[1], lon: p[0] }), 0), 0) / 1000;
+  toast(`Caminos importados · ${f.caminos.length} tramos · ${fmt(km, 2)} km`);
+}
+
+/* ============ Propuesta de parcelas de inventario ============
+   1. Rejilla de celdas de 5 m (la del MDT del IGN, en UTM 30 ETRS89) sobre la finca.
+   2. En cada celda: cota y pendiente (MDT 5 m), cobertura de copas (ortofoto PNOA:
+      píxeles oscuros = copa), UV y rodal, distancia al camino y al borde de la UV.
+   3. Candidatos válidos: círculo de la parcela entero dentro de la UV, camino a ≤ dMax
+      (y a ≥ dMin, para que no cruce la parcela) y pendiente ≤ pMax en todo el círculo.
+   4. Nota (menor = mejor): cobertura cercana a la mediana de la UV (así las parcelas de
+      una UV tienen un número parecido de pies) y entorno homogéneo (copas y pendiente).
+   5. Se eligen los mejores de cada UV, repartidos por rodales según su superficie y
+      separados entre sí. La oficina los revisa: acepta, mueve o descarta. */
+const PROP_DEF = { haPorParcela: 10, minPorUv: 1, dMax: 100, dMin: 25, pMax: 50 };
+const ANALISIS = {};   // por finca, solo en esta sesión: rejillas para recalcular al mover un punto
+async function analizarTerreno(f, avisar) {
+  const R = f.radio || 20, Z = 30;
+  const todo = [...(f.linde || []), ...(f.uvs || []).flatMap(u => u.polys)].flatMap(pg => pg.outer);
+  if (!todo.length) throw new Error('Carga antes las UV (y el linde) de la finca');
+  // Rejilla del MDT 5 m del IGN (UTM 30) sobre la finca, con margen
+  const us = todo.map(([lo, la]) => toUTM(la, lo, Z)), m = 3 * R + 20;
+  const x0 = Math.floor(Math.min(...us.map(u => u.x)) - m), x1 = Math.ceil(Math.max(...us.map(u => u.x)) + m);
+  const y0 = Math.floor(Math.min(...us.map(u => u.y)) - m), y1 = Math.ceil(Math.max(...us.map(u => u.y)) + m);
+  if ((x1 - x0) * (y1 - y0) > 25e6) throw new Error('La finca es demasiado grande para analizarla de una vez (más de 2.500 ha)');
+  avisar('Descargando el modelo del terreno del IGN…');
+  const txt = await (await fetch(`https://servicios.idee.es/wcs-inspire/mdt?SERVICE=WCS&REQUEST=GetCoverage&VERSION=2.0.1&COVERAGEID=Elevacion25830_5&SUBSET=x(${x0},${x1})&SUBSET=y(${y0},${y1})&FORMAT=ArcGrid`)).text();
+  const parte = txt.slice(Math.max(0, txt.search(/ncols/i))), fin = parte.search(/\r?\n--/);
+  const lin = (fin > 0 ? parte.slice(0, fin) : parte).split(/\r?\n/), h = {}; let k = 0;
+  for (; k < lin.length; k++) { const mm = lin[k].trim().match(/^([a-zA-Z_]+)\s+(-?[\d.eE+-]+)$/); if (!mm) break; h[mm[1].toLowerCase()] = +mm[2]; }
+  const nx = h.ncols, ny = h.nrows, dx = h.dx || h.cellsize, dy = h.dy || h.cellsize;
+  if (!nx || !ny) throw new Error('El servicio del MDT del IGN no ha devuelto datos; inténtalo más tarde');
+  const z = Float32Array.from(lin.slice(k).join(' ').trim().split(/\s+/).map(Number));
+  const N = nx * ny, idx = (i, j) => j * nx + i;                    // j = fila desde el norte
+  const cx = i => h.xllcorner + (i + .5) * dx, cy = j => h.yllcorner + (ny - j - .5) * dy;
+  // Pendiente (%) por el método de Horn
+  const pend = new Float32Array(N);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const Zc = (a, b) => z[idx(Math.min(nx - 1, Math.max(0, a)), Math.min(ny - 1, Math.max(0, b)))];
+    const gx = ((Zc(i + 1, j - 1) + 2 * Zc(i + 1, j) + Zc(i + 1, j + 1)) - (Zc(i - 1, j - 1) + 2 * Zc(i - 1, j) + Zc(i - 1, j + 1))) / (8 * dx);
+    const gy = ((Zc(i - 1, j + 1) + 2 * Zc(i, j + 1) + Zc(i + 1, j + 1)) - (Zc(i - 1, j - 1) + 2 * Zc(i, j - 1) + Zc(i + 1, j - 1))) / (8 * dy);
+    pend[idx(i, j)] = 100 * Math.hypot(gx, gy);
+  }
+  // Coordenadas geográficas de cada celda, UV y rodal
+  avisar('Situando las UV y los rodales…');
+  const lat = new Float64Array(N), lon = new Float64Array(N), uvI = new Int16Array(N).fill(-1), rodI = new Int16Array(N).fill(-1), enLinde = new Uint8Array(N);
+  const dentro = (lo, la, pg) => inRing(lo, la, pg.outer) && !pg.holes.some(hh => inRing(lo, la, hh));
+  const rodales = (f.uvs || []).flatMap((u, ui) => (u.rodales || []).map(r => ({ ...r, ui })));
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const c = idx(i, j), g = fromUTM(cx(i), cy(j), Z); lat[c] = g.lat; lon[c] = g.lon;
+    const ui = (f.uvs || []).findIndex(u => u.num !== '—' && u.polys.some(pg => dentro(g.lon, g.lat, pg)));
+    uvI[c] = ui; if (ui >= 0) rodI[c] = rodales.findIndex(r => r.ui === ui && r.polys.some(pg => dentro(g.lon, g.lat, pg)));
+    enLinde[c] = !(f.linde || []).length || f.linde.some(pg => dentro(g.lon, g.lat, pg)) ? 1 : 0;
+  }
+  // Distancias (m) al camino y al borde de la UV / del rodal, en UTM 30
+  avisar('Midiendo distancias a caminos y bordes…');
+  const aUtm = pts => pts.map(([lo, la]) => { const u = toUTM(la, lo, Z); return [u.x, u.y]; });
+  const segs = lines => lines.flatMap(l => l.slice(1).map((p, i) => [l[i], p]));
+  const dSeg = (px, py, [[ax, ay], [bx, by]]) => { const vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy, t = L2 ? Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / L2)) : 0; return Math.hypot(px - ax - t * vx, py - ay - t * vy); };
+  const caminos = segs((f.caminos || []).map(aUtm));
+  const bordesUv = (f.uvs || []).map(u => segs(u.polys.flatMap(pg => [pg.outer, ...pg.holes]).map(aUtm)).concat(segs((f.linde || []).map(pg => aUtm(pg.outer)))));
+  const bordesRod = rodales.map(r => segs(r.polys.flatMap(pg => [pg.outer, ...pg.holes]).map(aUtm)));
+  const dCam = new Float32Array(N).fill(Infinity), dUv = new Float32Array(N), dRod = new Float32Array(N).fill(Infinity);
+  for (let c = 0; c < N; c++) {
+    if (uvI[c] < 0) continue;
+    const i = c % nx, j = (c / nx) | 0, px = cx(i), py = cy(j);
+    let d = Infinity; for (const s of caminos) { const v = dSeg(px, py, s); if (v < d) d = v; } dCam[c] = d;
+    d = Infinity; for (const s of bordesUv[uvI[c]]) { const v = dSeg(px, py, s); if (v < d) d = v; } dUv[c] = d;
+    if (rodI[c] >= 0) { d = Infinity; for (const s of bordesRod[rodI[c]]) { const v = dSeg(px, py, s); if (v < d) d = v; } dRod[c] = d; }
+  }
+  // Cobertura de copas con la ortofoto PNOA: fracción de píxeles oscuros en cada celda
+  avisar('Descargando la ortofoto y midiendo la cobertura de copas…');
+  const zt = 18, n2 = 2 ** zt, mx = lo => (lo + 180) / 360 * n2 * 256, my = la => (1 - Math.log(Math.tan(la * Math.PI / 180) + 1 / Math.cos(la * Math.PI / 180)) / Math.PI) / 2 * n2 * 256;
+  const cells = []; for (let c = 0; c < N; c++) if (uvI[c] >= 0) cells.push(c);
+  const pxs = cells.map(c => [mx(lon[c]), my(lat[c])]);
+  const tx0 = Math.floor(Math.min(...pxs.map(p => p[0])) / 256) - 1, tx1 = Math.floor(Math.max(...pxs.map(p => p[0])) / 256) + 1;
+  const ty0 = Math.floor(Math.min(...pxs.map(p => p[1])) / 256) - 1, ty1 = Math.floor(Math.max(...pxs.map(p => p[1])) / 256) + 1;
+  const W = (tx1 - tx0 + 1) * 256, H = (ty1 - ty0 + 1) * 256;
+  if (W * H > 64e6) throw new Error('Zona demasiado grande para la ortofoto');
+  const cv = new OffscreenCanvas(W, H), g2 = cv.getContext('2d');
+  const tiles = []; for (let x = tx0; x <= tx1; x++) for (let y = ty0; y <= ty1; y++) tiles.push([x, y]);
+  let hechas = 0;
+  for (let i = 0; i < tiles.length; i += 8) await Promise.all(tiles.slice(i, i + 8).map(async ([x, y]) => {
+    try { const b = await (await fetch(FONDOS.sat.url.replace('{z}', zt).replace('{x}', x).replace('{y}', y), { mode: 'cors' })).blob(); g2.drawImage(await createImageBitmap(b), (x - tx0) * 256, (y - ty0) * 256); } catch (e) { }
+    if (++hechas % 20 === 0) avisar(`Ortofoto: ${hechas} de ${tiles.length} teselas…`);
+  }));
+  const img = g2.getImageData(0, 0, W, H).data;
+  const mpp = 156543.03 * Math.cos(lat[cells[0]] * Math.PI / 180) / n2;   // metros por píxel
+  const half = Math.max(2, Math.round(dx / 2 / mpp));
+  // Umbral de Otsu sobre la luminosidad de toda la zona de las UV
+  const hist = new Float64Array(256), lumC = new Map();
+  cells.forEach((c, q) => {
+    const [px, py] = pxs[q], X = Math.round(px - tx0 * 256), Y = Math.round(py - ty0 * 256), ls = [];
+    for (let v = -half; v < half; v += 1) for (let u = -half; u < half; u += 1) {
+      const xx = X + u, yy = Y + v; if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+      const o = (yy * W + xx) * 4, L = (0.299 * img[o] + 0.587 * img[o + 1] + 0.114 * img[o + 2]) | 0; ls.push(L); hist[L]++;
+    }
+    lumC.set(c, ls);
+  });
+  let tot = 0, sum = 0; for (let i = 0; i < 256; i++) { tot += hist[i]; sum += i * hist[i]; }
+  let wB = 0, sB = 0, best = 0, T = 100;
+  for (let i = 0; i < 256; i++) { wB += hist[i]; if (!wB) continue; const wF = tot - wB; if (!wF) break; sB += i * hist[i]; const mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) ** 2; if (v > best) { best = v; T = i; } }
+  const copa = new Float32Array(N).fill(NaN);
+  lumC.forEach((ls, c) => { copa[c] = ls.length ? ls.filter(L => L < T).length / ls.length : NaN; });
+  const A = { R, Z, nx, ny, dx, dy, x0: h.xllcorner, y0: h.yllcorner, z, pend, lat, lon, uvI, rodI, enLinde, dCam, dUv, dRod, copa, umbral: T, hayCaminos: caminos.length > 0, rodales };
+  A.idx = idx; A.cx = cx; A.cy = cy;
+  ANALISIS[f.id] = A;
+  return A;
+}
+// Métricas de un punto (celda central): círculo de la parcela y anillo alrededor.
+function metricas(A, c) {
+  const { R, nx, ny, dx } = A, i0 = c % nx, j0 = (c / nx) | 0, rc = Math.ceil(2 * R / dx);
+  const dentro = [], anillo = [];
+  for (let j = j0 - rc; j <= j0 + rc; j++) for (let i = i0 - rc; i <= i0 + rc; i++) {
+    if (i < 0 || j < 0 || i >= nx || j >= ny) continue;
+    const d = Math.hypot((i - i0) * dx, (j - j0) * A.dy), cc = A.idx(i, j);
+    if (d <= R) dentro.push(cc); else if (d <= 2 * R) anillo.push(cc);
+  }
+  const media = (arr, k) => { const v = arr.map(x => k[x]).filter(x => !isNaN(x)); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN; };
+  const copa = media(dentro, A.copa), copaAnillo = media(anillo, A.copa);
+  const vc = dentro.map(x => A.copa[x]).filter(x => !isNaN(x)), sd = vc.length ? Math.sqrt(vc.reduce((a, b) => a + (b - copa) ** 2, 0) / vc.length) : NaN;
+  const ps = dentro.map(x => A.pend[x]);
+  return { c, copa, copaAnillo, sdCopa: sd, het: Math.abs(copa - copaAnillo) + 0.5 * sd, pend: ps.reduce((a, b) => a + b, 0) / ps.length, pendMax: Math.max(...ps), dCam: A.dCam[c], dUv: A.dUv[c], dRod: A.dRod[c], uv: A.uvI[c], rod: A.rodI[c] };
+}
+function avisosDe(A, mt, cfg, mediana) {
+  const a = [];
+  if (A.hayCaminos && mt.dCam > cfg.dMax) a.push(`a ${Math.round(mt.dCam)} m del camino (máx. ${cfg.dMax})`);
+  if (A.hayCaminos && mt.dCam < cfg.dMin) a.push(`el camino pasa a ${Math.round(mt.dCam)} m: cruza la parcela`);
+  if (mt.pendMax > cfg.pMax) a.push(`pendiente de hasta ${Math.round(mt.pendMax)} % (máx. ${cfg.pMax})`);
+  if (mt.dUv < A.R + 5) a.push('el círculo de la parcela sale de la UV');
+  if (mediana != null && Math.abs(mt.copa - mediana) > 0.15) a.push(`cobertura ${Math.round(mt.copa * 100)} %, lejos de la típica de la UV (${Math.round(mediana * 100)} %)`);
+  if (mt.het > 0.2) a.push('entorno poco homogéneo');
+  return a;
+}
+async function proponerParcelas() {
+  const f = F(), cfg = { ...PROP_DEF, ...(f.propCfg || {}) }, est = $('#propEstado');
+  const avisar = t => { if (est) est.textContent = t; };
+  let A;
+  try { A = await analizarTerreno(f, avisar); } catch (e) { avisar(''); toast('No se pudo analizar: ' + e.message, 6000); return; }
+  avisar('Eligiendo los puntos…');
+  // Mediana de cobertura de cada UV (sobre toda la UV, no solo los candidatos): su valor típico
+  const nUv = f.uvs.length, medianas = [];
+  for (let u = 0; u < nUv; u++) {
+    const v = []; for (let c = 0; c < A.copa.length; c++) if (A.uvI[c] === u && !isNaN(A.copa[c])) v.push(A.copa[c]);
+    v.sort((a, b) => a - b); medianas[u] = v.length ? v[v.length >> 1] : null;
+  }
+  // Candidatos: una celda de cada 2 (≈10 m) para ir rápido
+  const cand = [];
+  for (let j = 0; j < A.ny; j += 2) for (let i = 0; i < A.nx; i += 2) {
+    const c = A.idx(i, j); if (A.uvI[c] < 0 || !A.enLinde[c]) continue;
+    if (A.dUv[c] < A.R + 5) continue;
+    if (A.hayCaminos && (A.dCam[c] > cfg.dMax || A.dCam[c] < cfg.dMin)) continue;
+    const mt = metricas(A, c); if (mt.pendMax > cfg.pMax || isNaN(mt.copa)) continue;
+    const M = medianas[mt.uv];
+    mt.nota = Math.abs(mt.copa - M) + mt.het + mt.pend / 500 + (A.hayCaminos ? 0.03 * mt.dCam / cfg.dMax : 0) + (mt.dRod < A.R + 5 ? 0.05 : 0);
+    cand.push(mt);
+  }
+  // Selección por UV, repartida por rodales según superficie y con separación mínima
+  const props = [], faltan = [];
+  f.uvs.forEach((u, ui) => {
+    if (u.num === '—') return;
+    const n = Math.max(cfg.minPorUv, Math.ceil(u.sup / cfg.haPorParcela));
+    const sep = Math.max(2.5 * A.R, 0.6 * Math.sqrt(u.sup * 10000 / n));
+    const cu = cand.filter(m => m.uv === ui).sort((a, b) => a.nota - b.nota);
+    const rods = A.rodales.map((r, ri) => ({ r, ri })).filter(x => x.r.ui === ui);
+    const cuota = new Map();
+    if (rods.length) {
+      const st = rods.reduce((a, x) => a + x.r.sup, 0), base = rods.map(x => ({ ri: x.ri, q: n * x.r.sup / st }));
+      base.forEach(b => cuota.set(b.ri, Math.floor(b.q)));
+      let resto = n - [...cuota.values()].reduce((a, b) => a + b, 0);
+      base.sort((a, b) => (b.q % 1) - (a.q % 1)).forEach(b => { if (resto > 0) { cuota.set(b.ri, cuota.get(b.ri) + 1); resto--; } });
+    }
+    const elegidos = [];
+    const lejos = m => elegidos.every(e => Math.hypot(((m.c % A.nx) - (e.c % A.nx)) * A.dx, (((m.c / A.nx) | 0) - ((e.c / A.nx) | 0)) * A.dy) >= sep);
+    for (const [ri, q] of cuota) { let k = 0; for (const m of cu) { if (k >= q) break; if (m.rod === ri && lejos(m)) { elegidos.push(m); k++; } } }
+    for (const m of cu) { if (elegidos.length >= n) break; if (!elegidos.includes(m) && lejos(m)) elegidos.push(m); }
+    if (elegidos.length < n) faltan.push(`${uvLabel(u)}: ${elegidos.length} de ${n}`);
+    elegidos.forEach(m => props.push({ m, u, ui, mediana: medianas[ui] }));
+  });
+  // Sustituye las propuestas anteriores por las nuevas
+  f.parcelas.filter(p => p.estado === 'propuesta' && !p.borrada).forEach(p => { p.borrada = true; mark(p); });
+  props.forEach((x, k) => {
+    const p = newParcela('P' + (k + 1), +A.lat[x.m.c].toFixed(7), +A.lon[x.m.c].toFixed(7));
+    p.estado = 'propuesta'; asignarUv(f, p);
+    p.f.prop = propInfo(A, x.m, cfg, x.mediana);
+    mark(p); f.parcelas.push(p);
+  });
+  avisar(''); mark(f); save(); MAPA && (MAPA._ajustado = false); render(true);
+  toast(`${props.length} parcelas propuestas${faltan.length ? ' · faltan puntos válidos en ' + faltan.join('; ') : ''}`, faltan.length ? 8000 : 4000);
+}
+const propInfo = (A, mt, cfg, mediana) => ({ copa: +mt.copa.toFixed(3), copaUv: mediana != null ? +mediana.toFixed(3) : null, het: +mt.het.toFixed(3), pend: +mt.pend.toFixed(1), pendMax: +mt.pendMax.toFixed(1), dCam: A.hayCaminos ? Math.round(mt.dCam) : null, avisos: avisosDe(A, mt, cfg, mediana) });
+// Al mover una propuesta en el mapa se recalculan sus datos con el análisis de esta sesión.
+function recalcularPropuesta(f, p) {
+  const A = ANALISIS[f.id]; if (!A) { p.f.prop = { ...(p.f.prop || {}), avisos: ['Movida a mano: pulsa «Proponer» otra vez para recalcular sus datos'] }; return; }
+  const u = toUTM(p.lat, p.lon, A.Z), i = Math.round((u.x - A.x0) / A.dx - .5), j = Math.round(A.ny - (u.y - A.y0) / A.dy - .5);
+  if (i < 0 || j < 0 || i >= A.nx || j >= A.ny) return;
+  const c = A.idx(i, j), mt = metricas(A, c), cfg = { ...PROP_DEF, ...(f.propCfg || {}) };
+  const ui = A.uvI[c]; let med = null;
+  if (ui >= 0) { const v = []; for (let k = 0; k < A.copa.length; k++) if (A.uvI[k] === ui && !isNaN(A.copa[k])) v.push(A.copa[k]); v.sort((a, b) => a - b); med = v[v.length >> 1]; }
+  p.f.prop = propInfo(A, mt, cfg, med);
+  if (ui < 0) p.f.prop.avisos.unshift('fuera de las UV');
+}
+function aceptarPropuestas(f, ids) {
+  let n = Math.max(0, ...reales(f).map(p => parseInt(p.num) || 0));
+  sorted(f, true).filter(p => p.estado === 'propuesta' && ids.includes(p.id)).forEach(p => { p.num = String(++n); p.estado = 'pendiente'; mark(p); });
+  save(); render(true);
+}
+function vPropuestas(f) {
+  const cfg = { ...PROP_DEF, ...(f.propCfg || {}) }, props = sorted(f, true).filter(p => p.estado === 'propuesta');
+  const pct = v => v == null ? '—' : Math.round(v * 100) + ' %';
+  return `
+  <section class="sec card">
+    <div class="sec-h"><h2>Proponer parcelas de inventario</h2></div>
+    <p class="hint">La app busca puntos accesibles (a menos de ${cfg.dMax} m de un camino), con la pendiente de toda la parcela por debajo del ${cfg.pMax} %, y que representen cada UV: cobertura de copas parecida a la típica de la UV, para que las parcelas tengan un número de pies parecido, y entorno homogéneo. Usa el MDT de 5 m y la ortofoto PNOA del IGN.${(f.caminos || []).length ? '' : ' <b>Carga antes los caminos en Ajustes.</b>'}</p>
+    <div class="grid3">
+      <label class="fld"><span>Ha por parcela</span><input data-pc="haPorParcela" data-num inputmode="decimal" value="${cfg.haPorParcela}"></label>
+      <label class="fld"><span>Mínimo por UV</span><input data-pc="minPorUv" data-num inputmode="numeric" value="${cfg.minPorUv}"></label>
+      <label class="fld"><span>Pendiente máx. (%)</span><input data-pc="pMax" data-num inputmode="decimal" value="${cfg.pMax}"></label>
+      <label class="fld"><span>Camino a máx. (m)</span><input data-pc="dMax" data-num inputmode="decimal" value="${cfg.dMax}"></label>
+      <label class="fld"><span>Camino a mín. (m)</span><input data-pc="dMin" data-num inputmode="decimal" value="${cfg.dMin}"></label>
+    </div>
+    <div class="row"><button class="btn" data-act="proponer">${props.length ? 'Volver a proponer' : 'Proponer parcelas'}</button><span class="hint" id="propEstado"></span></div>
+    ${props.length ? `
+    <div class="list">${props.map(p => { const x = p.f.prop || {}, u = uvOf(f, p); return `
+      <div class="r">
+        <div class="r-h"><b><span class="pm-ico st-propuesta" style="display:inline-grid;width:30px;height:30px;font-size:12px;vertical-align:middle">${esc(p.num)}</span> ${esc(u ? uvLabel(u) : 'Sin UV')}${p.rodal ? ' · rodal ' + esc(p.rodal) : ''}</b></div>
+        <div class="hint num">Copas ${pct(x.copa)} (típica de la UV ${pct(x.copaUv)}) · pendiente media ${x.pend != null ? Math.round(x.pend) + ' %' : '—'}, máx. ${x.pendMax != null ? Math.round(x.pendMax) + ' %' : '—'} · camino a ${x.dCam != null ? x.dCam + ' m' : '—'}</div>
+        ${(x.avisos || []).length ? `<div class="hint" style="color:var(--warn)">⚠ ${x.avisos.map(esc).join(' · ')}</div>` : '<div class="hint" style="color:var(--ok)">✓ Cumple las reglas</div>'}
+        <div class="row"><button class="btn" data-act="propOk" data-id="${p.id}">Aceptar</button><button class="btn ghost" data-act="propNo" data-id="${p.id}">Descartar</button><span class="hint">o arrástrala en el mapa</span></div>
+      </div>`; }).join('')}</div>
+    <div class="grid2"><button class="btn" data-act="propTodas">Aceptar todas</button><button class="btn danger" data-act="propNinguna">Descartar todas</button></div>` : ''}
+  </section>`;
 }
 
 /* ============ Exportar ============ */
@@ -1988,6 +2264,12 @@ document.addEventListener('click', e => {
       if (!confirm(`¿Devolver la parcela ${p.num} a la posición que puso la oficina?`)) break;
       p.lat = p.latO; p.lon = p.lonO; p.latO = p.lonO = null; asignarUv(f, p); touch(p); render(true); break;
     case 'uvX': exportUv(el.dataset.v); break;
+    case 'proponer': if (!navigator.onLine) toast('Hace falta conexión: se descargan el MDT y la ortofoto del IGN'); else { el.disabled = true; proponerParcelas().finally(() => { el.disabled = false; }); } break;
+    case 'propOk': aceptarPropuestas(f, [el.dataset.id]); toast('Parcela aceptada: ya la ve el equipo de campo'); break;
+    case 'propNo': { const q = f.parcelas.find(x => x.id === el.dataset.id); q.borrada = true; mark(q); save(); render(true); break; }
+    case 'propTodas': aceptarPropuestas(f, sorted(f, true).filter(p => p.estado === 'propuesta').map(p => p.id)); toast('Propuestas aceptadas: ya las ve el equipo de campo'); break;
+    case 'propNinguna': if (confirm('¿Descartar todas las propuestas?')) { sorted(f, true).filter(p => p.estado === 'propuesta').forEach(q => { q.borrada = true; mark(q); }); save(); render(true); } break;
+    case 'verPend': VER_PEND = !VER_PEND; render(true); break;
     case 'fondo': S.fondo = el.dataset.v; save(); if (MAPA) ponerFondo(S.fondo); break;
     case 'centrar': if (!G) toast(gErr || 'Aún no hay señal GPS'); else if (MAPA) MAPA.setView([G.lat, G.lon], Math.max(MAPA.getZoom(), 17)); break;
     case 'guardarMapa': if (!navigator.onLine) toast('Hace falta conexión para guardar el mapa'); else guardarMapa(); break;
@@ -2029,6 +2311,7 @@ document.addEventListener('input', e => {
   if (el.dataset.sk) { S[el.dataset.sk] = el.value; save(); return; }
   if (el.dataset.fk) { const f = F(); f[el.dataset.fk] = el.hasAttribute('data-num') ? (num(el.value) ?? f[el.dataset.fk]) : el.value; mark(f); save(); return; }
   if (el.dataset.pk) { const [id, k] = el.dataset.pk.split('.'); const q = F().parcelas.find(x => x.id === id); q[k] = el.value; mark(q); save(); return; }
+  if (el.dataset.pc) { const f = F(); f.propCfg = { ...PROP_DEF, ...(f.propCfg || {}), [el.dataset.pc]: num(el.value) ?? PROP_DEF[el.dataset.pc] }; save(); return; }
   if (el.dataset.uvk) { const f = F(); const [id, k] = el.dataset.uvk.split('.'); const u = f.uvs.find(x => x.id === id); u[k] = el.hasAttribute('data-num') ? num(el.value) : el.value; u.editado = true; mark(f); save(); return; }
   if (el.id === 'lgEmail' || el.id === 'lgPass') return;
   if (el.dataset.k) { const p = P(); setPath(p, el.dataset.k, el.hasAttribute('data-num') ? num(el.value) : el.value); touch(p); }
@@ -2047,6 +2330,7 @@ document.addEventListener('change', async e => {
   if (c === 'importPts' && el.files.length) importPts(el.files);
   if (c === 'importUv' && el.files.length) importUvs(el.files);
   if (c === 'importLinde' && el.files.length) importLinde(el.files);
+  if (c === 'importCaminos' && el.files.length) importCaminos(el.files);
   if (c === 'uvSel') {
     const q = f.parcelas.find(x => x.id === el.dataset.id);
     if (el.value === 'auto') { q.uvFija = false; asignarUv(f, q); } else { q.uvFija = true; q.uv = el.value === 'none' ? null : el.value; }
