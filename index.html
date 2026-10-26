@@ -389,7 +389,7 @@ function load() {
   if (S.syncV !== DATOS_V) { S.sync.last = null; S.syncV = DATOS_V; }
 }
 const DATOS_V = 3;
-const APP_V = '1.9 · 26/10/2026';   // se muestra en la pantalla de inicio
+const APP_V = '1.10 · 26/10/2026';   // se muestra en la pantalla de inicio
 function saveNow() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('No se pudo guardar en la tablet: ' + e.message, 5000); } }
 let saveT; function save() { clearTimeout(saveT); saveT = setTimeout(saveNow, 250); syncSoon(); }
 // Marca un cambio que hay que subir al servidor.
@@ -739,7 +739,7 @@ function vFinca() {
 <main class="wrap ${isOf() ? 'office' : ''}">
   <div class="status">${gpsPill()}${syncPill()}</div>
   <div class="split finca-split"><div class="col">
-  ${ps.length ? (window.L ? `<div class="map" id="map" role="region" aria-label="Mapa de la finca"></div>
+  ${ps.length || (f.uvs || []).length || (f.linde || []).length ? (window.L ? `<div class="map" id="map" role="region" aria-label="Mapa de la finca"></div>
   <div class="row map-bar">
     <div class="seg">${Object.entries(FONDOS).map(([k, v]) => `<button type="button" data-act="fondo" data-v="${k}" aria-pressed="${(S.fondo || 'sat') === k}">${v.nombre}</button>`).join('')}</div>
     <button type="button" class="btn ghost" data-act="centrar">Centrar en mí</button>
@@ -1586,9 +1586,9 @@ async function analizarTerreno(f, avisar) {
   const todo = [...(f.linde || []), ...(f.uvs || []).flatMap(u => u.polys)].flatMap(pg => pg.outer);
   if (!todo.length) throw new Error('Carga antes las UV (y el linde) de la finca');
   // Rejilla del MDT 5 m del IGN (UTM 30) sobre la finca, con margen
-  const us = todo.map(([lo, la]) => toUTM(la, lo, Z)), m = 3 * R + 20;
-  const x0 = Math.floor(Math.min(...us.map(u => u.x)) - m), x1 = Math.ceil(Math.max(...us.map(u => u.x)) + m);
-  const y0 = Math.floor(Math.min(...us.map(u => u.y)) - m), y1 = Math.ceil(Math.max(...us.map(u => u.y)) + m);
+  const m = 3 * R + 20; let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const [lo, la] of todo) { const u = toUTM(la, lo, Z); x0 = Math.min(x0, u.x); x1 = Math.max(x1, u.x); y0 = Math.min(y0, u.y); y1 = Math.max(y1, u.y); }
+  x0 = Math.floor(x0 - m); x1 = Math.ceil(x1 + m); y0 = Math.floor(y0 - m); y1 = Math.ceil(y1 + m);
   if ((x1 - x0) * (y1 - y0) > 25e6) throw new Error('La finca es demasiado grande para analizarla de una vez (más de 2.500 ha)');
   avisar('Descargando el modelo del terreno del IGN…');
   const txt = await (await fetch(`https://servicios.idee.es/wcs-inspire/mdt?SERVICE=WCS&REQUEST=GetCoverage&VERSION=2.0.1&COVERAGEID=Elevacion25830_5&SUBSET=x(${x0},${x1})&SUBSET=y(${y0},${y1})&FORMAT=ArcGrid`)).text();
@@ -1608,42 +1608,77 @@ async function analizarTerreno(f, avisar) {
     const gy = ((Zc(i - 1, j + 1) + 2 * Zc(i, j + 1) + Zc(i + 1, j + 1)) - (Zc(i - 1, j - 1) + 2 * Zc(i, j - 1) + Zc(i + 1, j - 1))) / (8 * dy);
     pend[idx(i, j)] = 100 * Math.hypot(gx, gy);
   }
-  // Coordenadas geográficas de cada celda, UV y rodal
-  avisar('Situando las UV y los rodales…');
+  const pausa = () => new Promise(r => setTimeout(r, 0));   // deja que la pantalla muestre el progreso
+  // Coordenadas geográficas de cada celda
+  avisar('Situando las UV y los rodales…'); await pausa();
   const lat = new Float64Array(N), lon = new Float64Array(N), uvI = new Int16Array(N).fill(-1), rodI = new Int16Array(N).fill(-1), enLinde = new Uint8Array(N);
-  const dentro = (lo, la, pg) => inRing(lo, la, pg.outer) && !pg.holes.some(hh => inRing(lo, la, hh));
-  const rodales = (f.uvs || []).flatMap((u, ui) => (u.rodales || []).map(r => ({ ...r, ui })));
-  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
-    const c = idx(i, j), g = fromUTM(cx(i), cy(j), Z); lat[c] = g.lat; lon[c] = g.lon;
-    const ui = (f.uvs || []).findIndex(u => u.num !== '—' && u.polys.some(pg => dentro(g.lon, g.lat, pg)));
-    uvI[c] = ui; if (ui >= 0) rodI[c] = rodales.findIndex(r => r.ui === ui && r.polys.some(pg => dentro(g.lon, g.lat, pg)));
-    enLinde[c] = !(f.linde || []).length || f.linde.some(pg => dentro(g.lon, g.lat, pg)) ? 1 : 0;
-  }
-  // Distancias (m) al camino y al borde de la UV / del rodal, en UTM 30
-  avisar('Midiendo distancias a caminos y bordes…');
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const c = idx(i, j), g = fromUTM(cx(i), cy(j), Z); lat[c] = g.lat; lon[c] = g.lon; }
   const aUtm = pts => pts.map(([lo, la]) => { const u = toUTM(la, lo, Z); return [u.x, u.y]; });
-  const segs = lines => lines.flatMap(l => l.slice(1).map((p, i) => [l[i], p]));
-  const dSeg = (px, py, [[ax, ay], [bx, by]]) => { const vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy, t = L2 ? Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / L2)) : 0; return Math.hypot(px - ax - t * vx, py - ay - t * vy); };
-  const caminos = segs((f.caminos || []).map(aUtm));
-  const bordesUv = (f.uvs || []).map(u => segs(u.polys.flatMap(pg => [pg.outer, ...pg.holes]).map(aUtm)).concat(segs((f.linde || []).map(pg => aUtm(pg.outer)))));
-  const bordesRod = rodales.map(r => segs(r.polys.flatMap(pg => [pg.outer, ...pg.holes]).map(aUtm)));
-  const dCam = new Float32Array(N).fill(Infinity), dUv = new Float32Array(N), dRod = new Float32Array(N).fill(Infinity);
-  for (let c = 0; c < N; c++) {
-    if (uvI[c] < 0) continue;
-    const i = c % nx, j = (c / nx) | 0, px = cx(i), py = cy(j);
-    let d = Infinity; for (const s of caminos) { const v = dSeg(px, py, s); if (v < d) d = v; } dCam[c] = d;
-    d = Infinity; for (const s of bordesUv[uvI[c]]) { const v = dSeg(px, py, s); if (v < d) d = v; } dUv[c] = d;
-    if (rodI[c] >= 0) { d = Infinity; for (const s of bordesRod[rodI[c]]) { const v = dSeg(px, py, s); if (v < d) d = v; } dRod[c] = d; }
-  }
+  // UV, rodal y linde rellenando los polígonos fila a fila (regla par-impar, con huecos)
+  const rellenar = (polys, set) => {
+    const anillos = polys.flatMap(pg => [pg.outer, ...pg.holes]).map(aUtm);
+    for (let j = 0; j < ny; j++) {
+      const y = cy(j), xs = [];
+      for (const r of anillos) for (let a = 0, b = r.length - 1; a < r.length; b = a++) { const [xa, ya] = r[a], [xb, yb] = r[b]; if ((ya > y) !== (yb > y)) xs.push(xa + (y - ya) * (xb - xa) / (yb - ya)); }
+      xs.sort((p, q) => p - q);
+      for (let k = 0; k + 1 < xs.length; k += 2) {
+        const i0 = Math.max(0, Math.ceil((xs[k] - h.xllcorner) / dx - .5)), i1 = Math.min(nx - 1, Math.floor((xs[k + 1] - h.xllcorner) / dx - .5));
+        for (let i = i0; i <= i1; i++) set(idx(i, j));
+      }
+    }
+  };
+  const rodales = (f.uvs || []).flatMap((u, ui) => (u.rodales || []).map(r => ({ ...r, ui })));
+  (f.uvs || []).forEach((u, ui) => { if (u.num !== '—') rellenar(u.polys, c => { uvI[c] = ui; }); });
+  rodales.forEach((r, ri) => rellenar(r.polys, c => { if (uvI[c] === r.ui) rodI[c] = ri; }));
+  if ((f.linde || []).length) rellenar(f.linde, c => { enLinde[c] = 1; }); else enLinde.fill(1);
+  // Distancias (m) con una transformada de distancia sobre la rejilla (dos pasadas)
+  avisar('Midiendo distancias a caminos y bordes…'); await pausa();
+  const distancia = semilla => {
+    const d = new Float32Array(N), a = dx, e = dy, b = Math.hypot(dx, dy);
+    for (let c = 0; c < N; c++) d[c] = semilla[c] ? 0 : Infinity;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const c = idx(i, j); let v = d[c];
+      if (i > 0) v = Math.min(v, d[c - 1] + a);
+      if (j > 0) { v = Math.min(v, d[c - nx] + e); if (i > 0) v = Math.min(v, d[c - nx - 1] + b); if (i < nx - 1) v = Math.min(v, d[c - nx + 1] + b); }
+      d[c] = v;
+    }
+    for (let j = ny - 1; j >= 0; j--) for (let i = nx - 1; i >= 0; i--) {
+      const c = idx(i, j); let v = d[c];
+      if (i < nx - 1) v = Math.min(v, d[c + 1] + a);
+      if (j < ny - 1) { v = Math.min(v, d[c + nx] + e); if (i < nx - 1) v = Math.min(v, d[c + nx + 1] + b); if (i > 0) v = Math.min(v, d[c + nx - 1] + b); }
+      d[c] = v;
+    }
+    return d;
+  };
+  // Celdas de borde: alguna vecina tiene otra etiqueta (otra UV, otro rodal o fuera del linde)
+  const borde = lab => { const s = new Uint8Array(N); for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { const c = idx(i, j), l = lab[c]; if ((i > 0 && lab[c - 1] !== l) || (i < nx - 1 && lab[c + 1] !== l) || (j > 0 && lab[c - nx] !== l) || (j < ny - 1 && lab[c + nx] !== l)) s[c] = 1; } return s; };
+  const sCam = new Uint8Array(N);
+  (f.caminos || []).map(aUtm).forEach(l => { for (let k = 1; k < l.length; k++) {
+    const [xa, ya] = l[k - 1], [xb, yb] = l[k], n = Math.max(1, Math.ceil(Math.hypot(xb - xa, yb - ya) / (dx / 2)));
+    for (let s = 0; s <= n; s++) { const x = xa + (xb - xa) * s / n, y = ya + (yb - ya) * s / n, i = Math.floor((x - h.xllcorner) / dx), jj = ny - 1 - Math.floor((y - h.yllcorner) / dy); if (i >= 0 && jj >= 0 && i < nx && jj < ny) sCam[idx(i, jj)] = 1; }
+  } });
+  const dCam = distancia(sCam);
+  const labUv = new Int16Array(N), labRod = new Int16Array(N);
+  for (let c = 0; c < N; c++) { labUv[c] = enLinde[c] ? uvI[c] : -2; labRod[c] = uvI[c] < 0 ? -2 : rodI[c]; }
+  const dUv = distancia(borde(labUv)), dRod = distancia(borde(labRod));
+  for (let c = 0; c < N; c++) if (rodI[c] < 0) dRod[c] = Infinity;
+  const caminos = f.caminos || [];
   // Cobertura de copas con la ortofoto PNOA: fracción de píxeles oscuros en cada celda
-  avisar('Descargando la ortofoto y midiendo la cobertura de copas…');
-  const zt = 18, n2 = 2 ** zt, mx = lo => (lo + 180) / 360 * n2 * 256, my = la => (1 - Math.log(Math.tan(la * Math.PI / 180) + 1 / Math.cos(la * Math.PI / 180)) / Math.PI) / 2 * n2 * 256;
-  const cells = []; for (let c = 0; c < N; c++) if (uvI[c] >= 0) cells.push(c);
+  avisar('Descargando la ortofoto y midiendo la cobertura de copas…'); await pausa();
+  const cells = []; let loMin = Infinity, loMax = -Infinity, laMin = Infinity, laMax = -Infinity;
+  for (let c = 0; c < N; c++) if (uvI[c] >= 0) { cells.push(c); loMin = Math.min(loMin, lon[c]); loMax = Math.max(loMax, lon[c]); laMin = Math.min(laMin, lat[c]); laMax = Math.max(laMax, lat[c]); }
+  if (!cells.length) throw new Error('Las UV no caen dentro de la zona del MDT');
+  // Zoom de la ortofoto: el mayor que quepa en un lienzo de 16 Mpx (límite de Safari en iPad)
+  let zt = 18, n2, tx0, tx1, ty0, ty1, W, H;
+  const mx = lo => (lo + 180) / 360 * n2 * 256, my = la => (1 - Math.log(Math.tan(la * Math.PI / 180) + 1 / Math.cos(la * Math.PI / 180)) / Math.PI) / 2 * n2 * 256;
+  for (; ; zt--) {
+    n2 = 2 ** zt;
+    tx0 = Math.floor(mx(loMin) / 256) - 1; tx1 = Math.floor(mx(loMax) / 256) + 1; ty0 = Math.floor(my(laMax) / 256) - 1; ty1 = Math.floor(my(laMin) / 256) + 1;
+    W = (tx1 - tx0 + 1) * 256; H = (ty1 - ty0 + 1) * 256;
+    if (W * H <= 16e6 || zt <= 15) break;
+  }
+  if (W * H > 16e6) throw new Error('Zona demasiado grande para la ortofoto');
   const pxs = cells.map(c => [mx(lon[c]), my(lat[c])]);
-  const tx0 = Math.floor(Math.min(...pxs.map(p => p[0])) / 256) - 1, tx1 = Math.floor(Math.max(...pxs.map(p => p[0])) / 256) + 1;
-  const ty0 = Math.floor(Math.min(...pxs.map(p => p[1])) / 256) - 1, ty1 = Math.floor(Math.max(...pxs.map(p => p[1])) / 256) + 1;
-  const W = (tx1 - tx0 + 1) * 256, H = (ty1 - ty0 + 1) * 256;
-  if (W * H > 64e6) throw new Error('Zona demasiado grande para la ortofoto');
   const cv = new OffscreenCanvas(W, H), g2 = cv.getContext('2d');
   const tiles = []; for (let x = tx0; x <= tx1; x++) for (let y = ty0; y <= ty1; y++) tiles.push([x, y]);
   let hechas = 0;
@@ -1654,21 +1689,22 @@ async function analizarTerreno(f, avisar) {
   const img = g2.getImageData(0, 0, W, H).data;
   const mpp = 156543.03 * Math.cos(lat[cells[0]] * Math.PI / 180) / n2;   // metros por píxel
   const half = Math.max(2, Math.round(dx / 2 / mpp));
-  // Umbral de Otsu sobre la luminosidad de toda la zona de las UV
-  const hist = new Float64Array(256), lumC = new Map();
-  cells.forEach((c, q) => {
-    const [px, py] = pxs[q], X = Math.round(px - tx0 * 256), Y = Math.round(py - ty0 * 256), ls = [];
+  // Recorre los píxeles de cada celda; primero para el umbral de Otsu y después para contar los oscuros
+  const pixeles = fn => cells.forEach((c, q) => {
+    const [px, py] = pxs[q], X = Math.round(px - tx0 * 256), Y = Math.round(py - ty0 * 256);
     for (let v = -half; v < half; v += 1) for (let u = -half; u < half; u += 1) {
       const xx = X + u, yy = Y + v; if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
-      const o = (yy * W + xx) * 4, L = (0.299 * img[o] + 0.587 * img[o + 1] + 0.114 * img[o + 2]) | 0; ls.push(L); hist[L]++;
+      const o = (yy * W + xx) * 4; if (!img[o + 3]) continue;   // tesela que no llegó
+      fn(c, (0.299 * img[o] + 0.587 * img[o + 1] + 0.114 * img[o + 2]) | 0);
     }
-    lumC.set(c, ls);
   });
+  const hist = new Float64Array(256); pixeles((c, L) => { hist[L]++; });
   let tot = 0, sum = 0; for (let i = 0; i < 256; i++) { tot += hist[i]; sum += i * hist[i]; }
   let wB = 0, sB = 0, best = 0, T = 100;
   for (let i = 0; i < 256; i++) { wB += hist[i]; if (!wB) continue; const wF = tot - wB; if (!wF) break; sB += i * hist[i]; const mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) ** 2; if (v > best) { best = v; T = i; } }
-  const copa = new Float32Array(N).fill(NaN);
-  lumC.forEach((ls, c) => { copa[c] = ls.length ? ls.filter(L => L < T).length / ls.length : NaN; });
+  const nPx = new Uint16Array(N), nOsc = new Uint16Array(N), copa = new Float32Array(N).fill(NaN);
+  pixeles((c, L) => { nPx[c]++; if (L < T) nOsc[c]++; });
+  for (const c of cells) if (nPx[c]) copa[c] = nOsc[c] / nPx[c];
   const A = { R, Z, nx, ny, dx, dy, x0: h.xllcorner, y0: h.yllcorner, z, pend, lat, lon, uvI, rodI, enLinde, dCam, dUv, dRod, copa, umbral: T, hayCaminos: caminos.length > 0, rodales };
   A.idx = idx; A.cx = cx; A.cy = cy;
   ANALISIS[f.id] = A;
@@ -1704,7 +1740,7 @@ async function proponerParcelas() {
   const avisar = t => { if (est) est.textContent = t; };
   let A;
   try { A = await analizarTerreno(f, avisar); } catch (e) { avisar(''); toast('No se pudo analizar: ' + e.message, 6000); return; }
-  avisar('Eligiendo los puntos…');
+  avisar('Eligiendo los puntos…'); await new Promise(r => setTimeout(r, 0));
   // Mediana de cobertura de cada UV (sobre toda la UV, no solo los candidatos): su valor típico
   const nUv = f.uvs.length, medianas = [];
   for (let u = 0; u < nUv; u++) {
