@@ -4,7 +4,16 @@
 -- Se puede volver a ejecutar sin perder datos.
 -- =====================================================================
 
-create extension if not exists postgis;
+-- PostGIS va en el esquema "extensions": en "public" su tabla spatial_ref_sys quedaría sin RLS
+-- (aviso de seguridad de Supabase "rls_disabled_in_public").
+create schema if not exists extensions;
+do $$ begin
+  if exists (select 1 from pg_extension e join pg_namespace n on n.oid = e.extnamespace where e.extname = 'postgis' and n.nspname = 'public') then
+    drop view if exists public.v_parcelas;
+    drop extension postgis;
+  end if;
+end $$;
+create extension if not exists postgis schema extensions;
 
 -- ---------------------------------------------------------------------
 -- Usuarios: cada cuenta tiene un perfil con su nombre y su rol.
@@ -219,9 +228,9 @@ select
   (p.lat_orig is not null)                   as punto_movido,
   p.lat_orig,
   p.lon_orig,
-  case when p.lat_orig is not null then round(st_distance(
-    st_setsrid(st_makepoint(p.lon_orig, p.lat_orig), 4326)::geography,
-    st_setsrid(st_makepoint(p.lon, p.lat), 4326)::geography)::numeric, 1) end as desplazamiento_m,
+  case when p.lat_orig is not null then round(extensions.st_distance(
+    extensions.st_setsrid(extensions.st_makepoint(p.lon_orig, p.lat_orig), 4326)::extensions.geography,
+    extensions.st_setsrid(extensions.st_makepoint(p.lon, p.lat), 4326)::extensions.geography)::numeric, 1) end as desplazamiento_m,
   (p.ficha->'gps'->>'lat')::float8           as lat_gps,
   (p.ficha->'gps'->>'lon')::float8           as lon_gps,
   (p.ficha->'gps'->>'acc')::float8           as precision_gps_m,
@@ -233,7 +242,7 @@ select
   p.ficha->>'defol'                          as defoliacion,
   p.ficha->>'obs'                            as observaciones,
   p.synced_at                                as actualizado,
-  st_setsrid(st_makepoint(p.lon, p.lat), 4326) as geom
+  extensions.st_setsrid(extensions.st_makepoint(p.lon, p.lat), 4326) as geom
 from public.parcelas p
 join public.fincas f on f.id = p.finca_id
 where not p.borrada and not f.borrada;
